@@ -1,5 +1,5 @@
 
-import { DRMD, Identifier } from "../types";
+import { DRMD } from "../types";
 
 const escapeXml = (unsafe: string | undefined | number | boolean) => {
     if (unsafe === undefined || unsafe === null) return '';

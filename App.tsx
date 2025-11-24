@@ -1,9 +1,6 @@
-
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
-    DRMD, INITIAL_DRMD, INITIAL_PRODUCER, INITIAL_PERSON, INITIAL_ID, INITIAL_QUANTITY, ALLOWED_TITLES,
-    INITIAL_ID as INITIAL_ID_CONST,
-    Material, MaterialProperty, MeasurementResult, Quantity, Producer, ResponsiblePerson
+    DRMD, INITIAL_DRMD, INITIAL_PRODUCER, INITIAL_PERSON, INITIAL_ID, INITIAL_QUANTITY, ALLOWED_TITLES
 } from './types';
 import { extractStructuredDataFromPdf } from './services/geminiService';
 import { generateDrmdXml } from './utils/xmlGenerator';
@@ -155,7 +152,7 @@ const PdfPage: React.FC<{
     )
 }
 
-const PdfViewer: React.FC<{ url: string; highlightData?: HighlightData | null; renderTrigger?: number }> = ({ url, highlightData, renderTrigger }) => {
+const PdfViewer: React.FC<{ url: string; highlightData?: HighlightData | null }> = ({ url, highlightData }) => {
     const [pdfDoc, setPdfDoc] = useState<any>(null);
     const [pages, setPages] = useState<number[]>([]);
 
@@ -199,7 +196,6 @@ const App: React.FC = () => {
   const [statusMessage, setStatusMessage] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [highlightData, setHighlightData] = useState<HighlightData | null>(null);
-  const [renderTrigger, setRenderTrigger] = useState<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -220,7 +216,6 @@ const App: React.FC = () => {
       } else if (typeof data === 'string' && data.length > 0) {
           setHighlightData({ type: 'text', value: data });
       }
-      setRenderTrigger(prev => prev + 1);
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -969,7 +964,7 @@ const App: React.FC = () => {
         {/* Left Panel: PDF Viewer */}
         <div className="w-[45%] bg-gray-800 border-r border-gray-700 flex flex-col relative">
           {pdfUrl ? (
-            <PdfViewer url={pdfUrl} highlightData={highlightData} renderTrigger={renderTrigger} />
+            <PdfViewer url={pdfUrl} highlightData={highlightData} />
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-gray-400 p-10 text-center">
                 <div className="text-6xl mb-4 opacity-20">📄</div>
