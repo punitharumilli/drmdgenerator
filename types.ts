@@ -146,8 +146,7 @@ export interface DRMD {
 // Constants for Initial States
 export const ALLOWED_TITLES = [
     "referenceMaterialCertificate",
-    "calibrationCertificate",
-    "measurementCertificate"
+    "productInformationSheet"
 ];
 
 export const INITIAL_ID: Identifier = { scheme: "", value: "", link: "" };

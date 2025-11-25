@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
     DRMD, INITIAL_DRMD, INITIAL_PRODUCER, INITIAL_PERSON, INITIAL_ID, INITIAL_QUANTITY, ALLOWED_TITLES
@@ -301,27 +302,21 @@ const App: React.FC = () => {
                    }
               }
               
-              // Auto-fix for Berlin -> DE
-              if (extractedData?.administrativeData?.producers) {
-                  extractedData.administrativeData.producers.forEach((p: any) => {
-                      const city = p.address?.city || "";
-                      if (city.toLowerCase().includes("berlin") || city.toLowerCase().includes("adlershof")) {
-                          if (!p.address) p.address = {};
-                          p.address.countryCode = "DE";
-                      }
-                  });
-              }
-
-              const cleanPostalCode = (pc: string) => pc ? pc.replace(/[^0-9]/g, '') : "";
+              // Helper to safely clean postal code
+              const cleanPostalCode = (pc: string | undefined) => pc ? pc.replace(/[^0-9]/g, '') : "";
 
               setDrmdData(prev => {
+                  // Strict Mapping for Materials
                   const newMats = (extractedData?.materials || []).map((m: any) => ({
                       ...m, 
                       uuid: generateUUID(), 
                       materialIdentifiers: [{...INITIAL_ID}], 
+                      name: m.name || "",
+                      description: m.description || "",
                       materialClass: m.materialClass || "", 
                       itemQuantities: m.itemQuantities || "1",
-                      minimumSampleSize: m.minimumSampleSize || "", 
+                      minimumSampleSize: m.minimumSampleSize || "",
+                      isCertified: !!m.isCertified,
                       fieldCoordinates: m.fieldCoordinates,
                       sectionCoordinates: m.sectionCoordinates
                   }));
@@ -400,6 +395,7 @@ const App: React.FC = () => {
                                   ...q, 
                                   uuid: generateUUID(), 
                                   identifiers: [{...INITIAL_ID}],
+                                  name: q.name || "",
                                   value: finalValue, 
                                   unit: q.unit || "", 
                                   uncertainty: finalUncertainty, 
@@ -418,14 +414,24 @@ const App: React.FC = () => {
                           return { 
                               ...r, 
                               name: finalName,
+                              description: r.description || "",
                               uuid: generateUUID(), 
                               quantities: qs,
                               sectionCoordinates: r.sectionCoordinates // Ensure section coords are preserved for tables
                           };
                       });
-                      return { ...p, uuid: generateUUID(), results: finalResults };
+                      return { 
+                          ...p, 
+                          uuid: generateUUID(), 
+                          name: p.name || "",
+                          description: p.description || "",
+                          procedures: p.procedures || "",
+                          isCertified: !!p.isCertified,
+                          results: finalResults 
+                        };
                   });
 
+                  // Strict Mapping for Producers
                   const newProds = (extractedData?.administrativeData?.producers || []).map((p: any) => {
                       let countryCode = p.address?.countryCode || "";
                       const city = p.address?.city || "";
@@ -438,13 +444,24 @@ const App: React.FC = () => {
                       return {
                           ...p, 
                           uuid: generateUUID(), 
+                          name: p.name || "",
+                          email: p.email || "",
+                          phone: p.phone || "",
+                          fax: p.fax || "",
                           organizationIdentifiers: [{...INITIAL_ID}], 
-                          address: { ...p.address, postCode: cleanPostalCode(p.address?.postCode), countryCode },
+                          address: { 
+                              street: p.address?.street || "",
+                              streetNo: p.address?.streetNo || "",
+                              postCode: cleanPostalCode(p.address?.postCode),
+                              city: p.address?.city || "",
+                              countryCode: countryCode
+                          },
                           fieldCoordinates: p.fieldCoordinates,
                           sectionCoordinates: p.sectionCoordinates
                       };
                   });
 
+                  // Strict Mapping for Responsible Persons
                   const newPersons = (extractedData?.administrativeData?.responsiblePersons || []).map((p: any) => ({
                       ...INITIAL_PERSON, 
                       uuid: generateUUID(), 
@@ -455,12 +472,30 @@ const App: React.FC = () => {
                       sectionCoordinates: p.sectionCoordinates
                   }));
 
+                  // Safely determine validity type
+                  let validType = prev.administrativeData.validityType;
+                  if (extractedData?.administrativeData?.validityType) {
+                      const vt = extractedData.administrativeData.validityType;
+                      if (vt === "Until Revoked" || vt === "Time After Dispatch" || vt === "Specific Time") {
+                          validType = vt;
+                      }
+                  }
+
+                  // Strict Safe Mapping for Administrative Data
                   return {
                       ...prev,
                       administrativeData: { 
                           ...prev.administrativeData, 
-                          ...extractedData?.administrativeData,
                           uniqueIdentifier: extractedData?.administrativeData?.uniqueIdentifier || prev.administrativeData.uniqueIdentifier || generateUUID(),
+                          // Force valid enum value for title, preventing free-text pollution in XML
+                          title: ALLOWED_TITLES.includes(extractedData?.administrativeData?.title as string) 
+                            ? (extractedData?.administrativeData?.title as string)
+                            : "referenceMaterialCertificate",
+                          dataVersion: prev.administrativeData.dataVersion,
+                          validityType: validType,
+                          durationY: extractedData?.administrativeData?.durationY ?? prev.administrativeData.durationY,
+                          durationM: extractedData?.administrativeData?.durationM ?? prev.administrativeData.durationM,
+                          specificTime: extractedData?.administrativeData?.specificTime || prev.administrativeData.specificTime,
                           dateOfIssue: new Date().toISOString().split('T')[0],
                           documentIdentifiers: [{ ...INITIAL_ID }],
                           producers: newProds.length > 0 ? newProds : prev.administrativeData.producers,
@@ -469,7 +504,18 @@ const App: React.FC = () => {
                       },
                       statements: { 
                           ...prev.statements, 
-                          official: { ...prev.statements.official, ...(extractedData?.statements?.official || {}) } 
+                          official: { 
+                              intendedUse: extractedData?.statements?.official?.intendedUse || "",
+                              commutability: extractedData?.statements?.official?.commutability || "",
+                              storageInformation: extractedData?.statements?.official?.storageInformation || "",
+                              handlingInstructions: extractedData?.statements?.official?.handlingInstructions || "",
+                              metrologicalTraceability: extractedData?.statements?.official?.metrologicalTraceability || "",
+                              healthAndSafety: extractedData?.statements?.official?.healthAndSafety || "",
+                              subcontractors: extractedData?.statements?.official?.subcontractors || "",
+                              legalNotice: extractedData?.statements?.official?.legalNotice || "",
+                              referenceToCertificationReport: extractedData?.statements?.official?.referenceToCertificationReport || "",
+                              fieldCoordinates: extractedData?.statements?.official?.fieldCoordinates
+                          } 
                       },
                       materials: newMats.length > 0 ? newMats : prev.materials,
                       properties: newProps.length > 0 ? newProps : prev.properties
@@ -1023,7 +1069,7 @@ const App: React.FC = () => {
             <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-lg flex items-center justify-center text-white text-xl">🔬</div>
             <div>
                 <h1 className="text-lg font-bold text-gray-800">DRMD Generator</h1>
-                <p className="text-xs text-gray-500">Streamlit Port • v0.3.0</p>
+                <p className="text-xs text-gray-500">Vercel Port • v0.3.0</p>
             </div>
         </div>
         <div className="flex gap-3">
@@ -1157,7 +1203,7 @@ const Select: React.FC<{ label: string; value: string; options: string[]; onChan
             onFocus={onFocus}
             className="w-full border border-gray-300 rounded-md p-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none bg-white"
         >
-            {options.map(o => <option key={o} value={o}>{o.replace(/([A-Z])/g, ' $1').trim()}</option>)}
+            {options.map(o => <option key={o} value={o}>{o.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase()).trim()}</option>)}
         </select>
     </div>
 );
