@@ -20,6 +20,12 @@ interface HighlightData {
     value: string | number[]; // text string OR [page, ymin, xmin, ymax, xmax]
 }
 
+interface PdfViewport {
+    width: number;
+    height: number;
+    transform: number[];
+}
+
 // Sub-component for individual PDF pages
 const PdfPage: React.FC<{ 
     pdfDoc: any; 
@@ -28,7 +34,7 @@ const PdfPage: React.FC<{
 }> = ({ pdfDoc, pageNum, highlightData }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const wrapperRef = useRef<HTMLDivElement>(null);
-    const [viewport, setViewport] = useState<any>(null);
+    const [viewport, setViewport] = useState<PdfViewport | null>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
 
     // 1. Render PDF Content
@@ -37,27 +43,27 @@ const PdfPage: React.FC<{
             if (!pdfDoc || !wrapperRef.current || !canvasRef.current) return;
             
             // Only re-render canvas if it's the first load or if text highlighting is requested (legacy fallback)
-            // We avoid re-rendering canvas for simple coordinate box highlights to improve performance.
             const isTextHighlight = highlightData?.type === 'text';
 
             const page = await pdfDoc.getPage(pageNum);
-            const containerWidth = wrapperRef.current.clientWidth;
+            const containerWidth = wrapperRef.current.clientWidth || 800; // Fallback width
             
-            // Calculate scale to fit container, maxing out at 1.5x for readability
+            // Calculate scale to fit container with high DPI support
+            // We ensure a minimum scale of 1.5 for text clarity
             const unscaledViewport = page.getViewport({ scale: 1 });
-            const scale = Math.min((containerWidth) / unscaledViewport.width, 1.5);
-            const newViewport = page.getViewport({ scale });
+            const pixelRatio = window.devicePixelRatio || 1;
+            const desiredScale = (containerWidth * pixelRatio) / unscaledViewport.width;
+            const scale = Math.max(desiredScale, 1.5);
             
+            const newViewport = page.getViewport({ scale });
             setViewport(newViewport);
             
             const canvas = canvasRef.current;
-            // Only draw if dimensions change or we need to draw text highlights
-            if (canvas.width !== newViewport.width || isTextHighlight) {
-                canvas.height = newViewport.height;
+            const ctx = canvas.getContext('2d');
+            
+            if (ctx && (canvas.width !== newViewport.width || isTextHighlight)) {
                 canvas.width = newViewport.width;
-                
-                const ctx = canvas.getContext('2d');
-                if(!ctx) return;
+                canvas.height = newViewport.height;
                 
                 // Clear and Render PDF
                 const renderContext = { canvasContext: ctx, viewport: newViewport };
@@ -109,21 +115,36 @@ const PdfPage: React.FC<{
 
     // 2. Coordinate Highlighting (DOM Overlay - The "Best Method")
     const highlightBox = useMemo(() => {
-        if (!viewport || !highlightData || highlightData.type !== 'coords') return null;
+        if (!highlightData || highlightData.type !== 'coords') return null;
         
         // Gemini: [pageIndex, ymin, xmin, ymax, xmax] (0-1000 scale)
-        const [p, ymin, xmin, ymax, xmax] = highlightData.value as number[];
+        const [p, rawYmin, xmin, rawYmax, xmax] = highlightData.value as number[];
         
         if (p !== pageNum) return null;
 
-        // Map 0-1000 normalized coordinates to current Viewport pixels
+        // Apply dynamic padding to height to fix "small box" issues
+        const rawHeight = rawYmax - rawYmin;
+        
+        // User requested: "starts perfectly but the height of the box should be sightly more"
+        // We increase the padding factor and shift the distribution.
+        const paddingFactor = rawHeight < 50 ? 0.5 : 0.2; 
+        const padding = rawHeight * paddingFactor;
+        
+        // Apply assymetric padding: 
+        // 10% to Top (maintain "starts perfectly" with slight buffer)
+        // 90% to Bottom (increase height below)
+        const ymin = Math.max(0, rawYmin - (padding * 0.1));
+        const ymax = Math.min(1000, rawYmax + (padding * 0.9));
+
+        // Map 0-1000 normalized coordinates to PERCENTAGES of container
+        // This handles CSS scaling (e.g. w-full) automatically
         return {
-            top: (ymin / 1000) * viewport.height,
-            left: (xmin / 1000) * viewport.width,
-            width: ((xmax - xmin) / 1000) * viewport.width,
-            height: ((ymax - ymin) / 1000) * viewport.height
+            top: `${ymin / 10}%`,
+            left: `${xmin / 10}%`,
+            width: `${(xmax - xmin) / 10}%`,
+            height: `${(ymax - ymin) / 10}%`
         };
-    }, [viewport, highlightData, pageNum]);
+    }, [highlightData, pageNum]);
 
     // Scroll effect for Coords
     useEffect(() => {
@@ -132,13 +153,26 @@ const PdfPage: React.FC<{
         }
     }, [highlightBox]);
 
+    // Use aspect-ratio style to strictly enforce the relationship between width/height based on the PDF Page
+    const containerStyle = useMemo(() => {
+        if (!viewport) return { minHeight: '300px' };
+        return { aspectRatio: `${viewport.width} / ${viewport.height}` };
+    }, [viewport]);
+
     return (
-        <div ref={wrapperRef} className="relative w-full mb-4 shadow-md bg-white">
-            <canvas ref={canvasRef} className="block w-full rounded-sm" />
+        <div 
+            ref={wrapperRef} 
+            className="relative w-full mb-4 shadow-md bg-white"
+            style={containerStyle}
+        >
+            <canvas 
+                ref={canvasRef} 
+                className="block w-full h-full rounded-sm" 
+            />
             {highlightBox && (
                 <div 
                     ref={scrollRef}
-                    className="absolute border-2 border-red-500 bg-red-500/20 z-10 animate-pulse shadow-sm"
+                    className="absolute border-2 border-red-600 bg-red-500/25 z-10 animate-pulse shadow-sm mix-blend-multiply"
                     style={{
                         top: highlightBox.top,
                         left: highlightBox.left,
@@ -251,6 +285,31 @@ const App: React.FC = () => {
                       extractedData.administrativeData.durationY = Math.floor(totalMonths / 12);
                       extractedData.administrativeData.durationM = totalMonths % 12;
                   }
+              }
+
+              // Fix Specific Time MM/YYYY format to YYYY-MM-DD (End of Month)
+              if (extractedData?.administrativeData?.validityType === "Specific Time" && extractedData.administrativeData.specificTime) {
+                   const raw = extractedData.administrativeData.specificTime.trim();
+                   // Match MM/YYYY or M/YYYY
+                   const match = raw.match(/^(\d{1,2})\/(\d{4})$/);
+                   if (match) {
+                       const month = parseInt(match[1]);
+                       const year = parseInt(match[2]);
+                       // Get last day of month: day 0 of next month
+                       const lastDay = new Date(year, month, 0).getDate();
+                       extractedData.administrativeData.specificTime = `${year}-${match[1].padStart(2, '0')}-${lastDay}`;
+                   }
+              }
+              
+              // Auto-fix for Berlin -> DE
+              if (extractedData?.administrativeData?.producers) {
+                  extractedData.administrativeData.producers.forEach((p: any) => {
+                      const city = p.address?.city || "";
+                      if (city.toLowerCase().includes("berlin") || city.toLowerCase().includes("adlershof")) {
+                          if (!p.address) p.address = {};
+                          p.address.countryCode = "DE";
+                      }
+                  });
               }
 
               const cleanPostalCode = (pc: string) => pc ? pc.replace(/[^0-9]/g, '') : "";
@@ -367,14 +426,24 @@ const App: React.FC = () => {
                       return { ...p, uuid: generateUUID(), results: finalResults };
                   });
 
-                  const newProds = (extractedData?.administrativeData?.producers || []).map((p: any) => ({
-                      ...p, 
-                      uuid: generateUUID(), 
-                      organizationIdentifiers: [{...INITIAL_ID}], 
-                      address: { ...p.address, postCode: cleanPostalCode(p.address?.postCode) },
-                      fieldCoordinates: p.fieldCoordinates,
-                      sectionCoordinates: p.sectionCoordinates
-                  }));
+                  const newProds = (extractedData?.administrativeData?.producers || []).map((p: any) => {
+                      let countryCode = p.address?.countryCode || "";
+                      const city = p.address?.city || "";
+                      
+                      // Auto-fix for Berlin -> DE (redundant check but keeps consistency)
+                      if (city.toLowerCase().includes("berlin") || city.toLowerCase().includes("adlershof")) {
+                          countryCode = "DE";
+                      }
+                  
+                      return {
+                          ...p, 
+                          uuid: generateUUID(), 
+                          organizationIdentifiers: [{...INITIAL_ID}], 
+                          address: { ...p.address, postCode: cleanPostalCode(p.address?.postCode), countryCode },
+                          fieldCoordinates: p.fieldCoordinates,
+                          sectionCoordinates: p.sectionCoordinates
+                      };
+                  });
 
                   const newPersons = (extractedData?.administrativeData?.responsiblePersons || []).map((p: any) => ({
                       ...INITIAL_PERSON, 
@@ -462,10 +531,10 @@ const App: React.FC = () => {
         <div className="space-y-4 border p-4 rounded-lg bg-white shadow-sm">
             <SectionHeader title="Basic Information" icon="📄" />
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Select label="Title of Document" value={drmdData.administrativeData.title} options={ALLOWED_TITLES} onChange={(v) => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, title: v}}))} />
+                <Select label="Title of Document *" value={drmdData.administrativeData.title} options={ALLOWED_TITLES} onChange={(v) => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, title: v}}))} />
                 <div className="flex gap-2 items-end">
                     <div className="flex-1">
-                        <Input label="Unique Identifier" value={drmdData.administrativeData.uniqueIdentifier} onChange={(v) => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, uniqueIdentifier: v}}))} onInfoClick={() => handleHighlight(drmdData.administrativeData.fieldCoordinates?.['uniqueIdentifier'] || drmdData.administrativeData.uniqueIdentifier)} />
+                        <Input label="Unique Identifier *" value={drmdData.administrativeData.uniqueIdentifier} onChange={(v) => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, uniqueIdentifier: v}}))} onInfoClick={() => handleHighlight(drmdData.administrativeData.fieldCoordinates?.['uniqueIdentifier'] || drmdData.administrativeData.uniqueIdentifier)} />
                     </div>
                     <button onClick={() => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, uniqueIdentifier: generateUUID()}}))} className="bg-gray-200 p-2 rounded mb-[2px] hover:bg-gray-300" title="Generate new UUID">🔄</button>
                 </div>
@@ -475,7 +544,7 @@ const App: React.FC = () => {
             <div className="border-t pt-4 mt-2">
                 <h4 className="font-bold text-sm text-gray-700 mb-2">Period of Validity</h4>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
-                    <Select label="Validity Type" value={drmdData.administrativeData.validityType} options={["Until Revoked", "Time After Dispatch", "Specific Time"]} onChange={(v) => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, validityType: v as any}}))} />
+                    <Select label="Validity Type *" value={drmdData.administrativeData.validityType} options={["Until Revoked", "Time After Dispatch", "Specific Time"]} onChange={(v) => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, validityType: v as any}}))} />
                     
                     {drmdData.administrativeData.validityType === "Time After Dispatch" && (
                         <>
@@ -489,13 +558,13 @@ const App: React.FC = () => {
                                     {getIsoDuration()}
                                 </div>
                                 <div className="mt-2">
-                                    <Input label="Dispatch Date" type="date" value={drmdData.administrativeData.dateOfIssue} onChange={(v) => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, dateOfIssue: v}}))} />
+                                    <Input label="Dispatch Date *" type="date" value={drmdData.administrativeData.dateOfIssue} onChange={(v) => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, dateOfIssue: v}}))} />
                                 </div>
                             </div>
                         </>
                     )}
                     {drmdData.administrativeData.validityType === "Specific Time" && (
-                        <Input label="Valid Until Date" type="date" value={drmdData.administrativeData.specificTime} onChange={(v) => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, specificTime: v}}))} />
+                        <Input label="Valid Until Date *" type="date" value={drmdData.administrativeData.specificTime} onChange={(v) => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, specificTime: v}}))} />
                     )}
                 </div>
             </div>
@@ -600,16 +669,18 @@ const App: React.FC = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-3">
                         {/* Use fieldCoordinates for Name (specific field) or fallback to text search */}
-                        <Input label="Material Name" value={mat.name} onFocus={() => handleHighlight(mat.fieldCoordinates?.['name'] || mat.name)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].name = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.fieldCoordinates?.['name'] || mat.name)} />
+                        <Input label="Material Name *" value={mat.name} onFocus={() => handleHighlight(mat.fieldCoordinates?.['name'] || mat.name)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].name = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.fieldCoordinates?.['name'] || mat.name)} />
                         
                         {/* Keep sectionCoordinates for other fields as requested by user ("rest all are working perfectly") */}
                         <Input label="Material Class" value={mat.materialClass} onFocus={() => handleHighlight(mat.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].materialClass = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.sectionCoordinates)} />
                         <Input label="Item Quantities" value={mat.itemQuantities} onFocus={() => handleHighlight(mat.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].itemQuantities = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.sectionCoordinates)} />
                     </div>
                     <div className="space-y-3">
-                         <TextArea label="Description" value={mat.description} onFocus={() => handleHighlight(mat.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].description = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.sectionCoordinates)} />
+                         {/* Modified to prefer specific field coordinates if available */}
+                         <TextArea label="Description" value={mat.description} onFocus={() => handleHighlight(mat.fieldCoordinates?.['description'] || mat.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].description = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.fieldCoordinates?.['description'] || mat.sectionCoordinates)} />
                          <div className="grid grid-cols-2 gap-4 items-end">
-                             <Input label="Min Sample Size (e.g. 4.9 g)" value={mat.minimumSampleSize} onFocus={() => handleHighlight(mat.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].minimumSampleSize = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.sectionCoordinates)} />
+                             {/* CHANGED: Use 'intendedUse' coordinates for Min Sample Size as it typically resides in the Recommended Use paragraph */}
+                             <Input label="Min Sample Size (e.g. 4.9 g) *" value={mat.minimumSampleSize} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['intendedUse'] || mat.fieldCoordinates?.['minimumSampleSize'] || mat.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].minimumSampleSize = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['intendedUse'] || mat.fieldCoordinates?.['minimumSampleSize'] || mat.sectionCoordinates)} />
                              <div className="pb-2">
                                 <label className="flex items-center gap-2 font-bold text-gray-700 cursor-pointer"><input type="checkbox" checked={mat.isCertified} onChange={(e) => { const list = [...drmdData.materials]; list[idx].isCertified = e.target.checked; setDrmdData(p => ({...p, materials: list})); }} /> Certified</label>
                              </div>
@@ -772,10 +843,10 @@ const App: React.FC = () => {
           <SectionHeader title="Official ISO 17034 Statements" icon="📋" />
           <p className="text-sm text-gray-500 mb-4">Standard statements required by ISO 17034 for reference material certificates.</p>
           
-          <TextArea label="Intended Use" value={drmdData.statements.official.intendedUse} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, intendedUse: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['intendedUse'] || drmdData.statements.official.intendedUse)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['intendedUse'] || drmdData.statements.official.intendedUse)} />
+          <TextArea label="Intended Use *" value={drmdData.statements.official.intendedUse} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, intendedUse: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['intendedUse'] || drmdData.statements.official.intendedUse)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['intendedUse'] || drmdData.statements.official.intendedUse)} />
           <TextArea label="Commutability" value={drmdData.statements.official.commutability} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, commutability: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['commutability'] || drmdData.statements.official.commutability)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['commutability'] || drmdData.statements.official.commutability)} />
-          <TextArea label="Storage Information" value={drmdData.statements.official.storageInformation} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, storageInformation: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['storageInformation'] || drmdData.statements.official.storageInformation)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['storageInformation'] || drmdData.statements.official.storageInformation)} />
-          <TextArea label="Instructions For Handling And Use" value={drmdData.statements.official.handlingInstructions} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, handlingInstructions: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['handlingInstructions'] || drmdData.statements.official.handlingInstructions)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['handlingInstructions'] || drmdData.statements.official.handlingInstructions)} />
+          <TextArea label="Storage Information *" value={drmdData.statements.official.storageInformation} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, storageInformation: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['storageInformation'] || drmdData.statements.official.storageInformation)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['storageInformation'] || drmdData.statements.official.storageInformation)} />
+          <TextArea label="Instructions For Handling And Use *" value={drmdData.statements.official.handlingInstructions} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, handlingInstructions: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['handlingInstructions'] || drmdData.statements.official.handlingInstructions)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['handlingInstructions'] || drmdData.statements.official.handlingInstructions)} />
           <TextArea label="Metrological Traceability" value={drmdData.statements.official.metrologicalTraceability} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, metrologicalTraceability: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['metrologicalTraceability'] || drmdData.statements.official.metrologicalTraceability)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['metrologicalTraceability'] || drmdData.statements.official.metrologicalTraceability)} />
           <TextArea label="Health And Safety Information" value={drmdData.statements.official.healthAndSafety} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, healthAndSafety: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['healthAndSafety'] || drmdData.statements.official.healthAndSafety)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['healthAndSafety'] || drmdData.statements.official.healthAndSafety)} />
           <TextArea label="Subcontractors" value={drmdData.statements.official.subcontractors} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, subcontractors: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['subcontractors'] || drmdData.statements.official.subcontractors)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['subcontractors'] || drmdData.statements.official.subcontractors)} />
@@ -819,6 +890,8 @@ const App: React.FC = () => {
         // Producers
         if (drmdData.administrativeData.producers.length === 0) {
             errors.push({ section: "Administrative", message: "At least one Producer is required." });
+        } else if (drmdData.administrativeData.producers.length > 1) {
+            errors.push({ section: "Administrative", message: "Only ONE Producer is allowed by schema." });
         } else {
             drmdData.administrativeData.producers.forEach((p, i) => {
                 if (!p.name) errors.push({ section: "Administrative", message: `Producer ${i + 1}: Name is required.` });
@@ -836,8 +909,14 @@ const App: React.FC = () => {
         } else {
             drmdData.materials.forEach((m, i) => {
                 if (!m.name) errors.push({ section: "Materials", message: `Material ${i + 1}: Name is required.` });
+                if (!m.minimumSampleSize) errors.push({ section: "Materials", message: `Material ${i + 1}: Minimum Sample Size is required.` });
             });
         }
+
+        // Statements - Strict XSD Checks (minOccurs=1)
+        if (!drmdData.statements.official.intendedUse) errors.push({ section: "Statements", message: "Intended Use is required." });
+        if (!drmdData.statements.official.storageInformation) errors.push({ section: "Statements", message: "Storage Information is required." });
+        if (!drmdData.statements.official.handlingInstructions) errors.push({ section: "Statements", message: "Instructions for Handling and Use are required." });
 
         return { errors, warnings };
     };

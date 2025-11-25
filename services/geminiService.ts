@@ -26,14 +26,24 @@ Populate the 'sectionCoordinates' field for:
 
 Key Extraction Rules:
 1. **Administrative Data**: 
-   - Extract producer details, responsible persons (names/roles/signatures).
+   - **Producer**: Extract name, full address, email, and **PHONE NUMBER**. 
+     - **PHONE**: Look specifically for labels like "P:", "Phone:", "Tel:", or patterns starting with country codes (e.g., "+49"). Ensure this is extracted.
+     - **Address**: If the City is "Berlin", ALWAYS set the 'countryCode' to "DE".
+   - **Responsible Persons (Strict Parsing)**: 
+     - Interpret the text block hierarchically:
+     - **Line 1 (Top)**: Extract as 'name' (e.g., "Dr. F. Emmerling").
+     - **Line 2**: Extract as 'role' (e.g., "Head of Department 1").
+     - **Lines 3+ (Bottom)**: Combine ALL remaining lines into 'description' (e.g., "Analytical Chemistry; Reference Materials").
    - **Validity**:
      - "valid for X months" -> 'Time After Dispatch' (durationM).
      - "valid until [Date]" -> 'Specific Time' (specificTime).
+       - **CRITICAL DATE FORMAT**: ALL dates (dateOfIssue, specificTime) MUST be in **YYYY-MM-DD** format.
+       - If a date is given as **MM/YYYY** (e.g. "05/2048"), convert it to the **LAST DAY** of that month (e.g. "2048-05-31").
      - "valid until revoked" -> 'Until Revoked'.
 
 2. **Materials**: Extract name, description, and minimum sample size.
    - **IMPORTANT**: The "Material Name" is often the prominent title of the document (e.g., "Li-NMC 111..."). Ensure you extract specific **fieldCoordinates** for the 'name' field, distinct from the generic section block.
+   - **Coordinates**: Attempt to extract distinct **fieldCoordinates** for 'description' and 'minimumSampleSize' if they are visually distinct blocks.
 
 3. **Properties (CRITICAL - TABLE STRUCTURE)**: 
    - **Property vs. Result**: A "Property" is a high-level section (e.g., "Certified Values", "Informative Values"). A "MeasurementResult" is a specific table within that section.
@@ -52,6 +62,8 @@ Key Extraction Rules:
      - Values like "< 2" or "> 100" are VALUES. Put them in 'value'. Leave 'uncertainty' empty.
 
 4. **Statements**: Extract full text and BOUNDING BOX COORDINATES (into fieldCoordinates) for Intended Use, Storage, Handling, etc.
+   - **Subcontractors**: Look for sections titled "Participating Laboratories", "Collaborating Laboratories", "Analyses Performed By" or "Subcontractors". Extract the list of laboratory names found under these headers into the 'subcontractors' field.
+   - **Reference To Certification Report**: Ensure the coordinates capture the text describing the report availability (e.g., "A detailed technical report..."). Ensure the box is distinct from and strictly BELOW the Subcontractors/Laboratories section.
 
 Return ONLY the JSON object.
 `;

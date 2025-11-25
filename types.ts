@@ -167,7 +167,7 @@ export const INITIAL_PERSON: ResponsiblePerson = {
     name: "",
     role: "",
     description: "",
-    mainSigner: false,
+    mainSigner: true, // Defaulting to true as requested
     cryptElectronicSeal: false,
     cryptElectronicSignature: false,
     cryptElectronicTimeStamp: false
