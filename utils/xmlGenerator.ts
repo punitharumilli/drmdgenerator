@@ -1,6 +1,7 @@
 
 
 import { DRMD } from "../types";
+import { convertToDSI } from "./unitConverter";
 
 const escapeXml = (unsafe: string | undefined | number | boolean) => {
     if (unsafe === undefined || unsafe === null) return '';
@@ -32,6 +33,47 @@ const renderValidity = (data: DRMD["administrativeData"]) => {
         </drmd:timeAfterDispatch>`;
     }
     return "";
+};
+
+// Helper to render primitive quantity types (MinimumSampleSize, ItemQuantities)
+// Follows dcc_primitiveQuantityType structure with a choice between drmd:real and drmd:noQuantity
+const renderPrimitiveQuantity = (value: string) => {
+    // If empty or explicitly "noQuantity", render the noQuantity element with "noQuantity" as content
+    // This ensures compliance with schema (minOccurs=1 for choice)
+    if (!value || value === "noQuantity") {
+        return `
+          <drmd:noQuantity>
+            <dcc:content lang="en">noQuantity</dcc:content>
+          </drmd:noQuantity>`;
+    }
+    
+    // Regex to find "Number" then "Unit"
+    // e.g. "4.9 g", "10 ml", "100 %"
+    // Does NOT match "approx 5 g" (starts with text)
+    const regex = /^([\d.]+(?:[eE][+-]?\d+)?)\s*(\S.*)$/;
+    const match = value.trim().match(regex);
+    
+    if (match) {
+        const numPart = match[1];
+        const unitPart = match[2];
+        const dsi = convertToDSI(numPart, unitPart);
+        
+        // If valid DSI unit conversion exists
+        if (dsi.dsiUnit) {
+            // Using <drmd:real> as per schema: <xs:element name="real" type="drmd:si_realType"/>
+            return `
+          <drmd:real>
+            <si:value>${escapeXml(dsi.dsiValue)}</si:value>
+            <si:unit>${escapeXml(dsi.dsiUnit)}</si:unit>
+          </drmd:real>`;
+        }
+    }
+    
+    // Fallback to noQuantity for text, ranges, or unrecognized units
+    return `
+          <drmd:noQuantity>
+            <dcc:content lang="en">${escapeXml(value)}</dcc:content>
+          </drmd:noQuantity>`;
 };
 
 export const generateDrmdXml = (data: DRMD): string => {
@@ -107,7 +149,6 @@ ${renderValidity(data.administrativeData)}
     let materialsXml = `
   <drmd:materials>`;
     data.materials.forEach(mat => {
-        const safeMinSize = mat.minimumSampleSize || '';
         
         materialsXml += `
     <drmd:material>
@@ -118,21 +159,13 @@ ${renderValidity(data.administrativeData)}
         <dcc:content lang="en">${escapeXml(mat.description)}</dcc:content>
       </drmd:description>
       <drmd:minimumSampleSize>
-        <dcc:itemQuantity>
-          <si:realListXMLList>
-            <si:valueXMLList>${escapeXml(safeMinSize.replace(/[a-zA-Z\s]/g, ''))}</si:valueXMLList>
-            <si:unitXMLList>${escapeXml(safeMinSize.replace(/[\d\.\s]/g, ''))}</si:unitXMLList>
-          </si:realListXMLList>
+        <dcc:itemQuantity>${renderPrimitiveQuantity(mat.minimumSampleSize)}
         </dcc:itemQuantity>
       </drmd:minimumSampleSize>`;
         if (mat.itemQuantities) {
             materialsXml += `
       <drmd:itemQuantities>
-        <dcc:itemQuantity>
-          <si:realListXMLList>
-            <si:valueXMLList>${escapeXml(mat.itemQuantities)}</si:valueXMLList>
-            <si:unitXMLList/>
-          </si:realListXMLList>
+        <dcc:itemQuantity>${renderPrimitiveQuantity(mat.itemQuantities)}
         </dcc:itemQuantity>
       </drmd:itemQuantities>`;
         }
@@ -189,7 +222,8 @@ ${renderValidity(data.administrativeData)}
           <drmd:data>
             <drmd:list>`;
             res.quantities.forEach(q => {
-                const val = q.dsiValue || q.value;
+                // Use original value as requested, and DSI unit if available
+                const val = q.value;
                 const unit = q.dsiUnit || q.unit;
                 
                 propertiesXml += `
@@ -248,8 +282,19 @@ ${renderValidity(data.administrativeData)}
     statementsXml += `
   </drmd:statements>`;
 
+    // --- Comment and Document ---
+    let extraXml = '';
+    if (data.generalComment) {
+        extraXml += `
+  <drmd:comment>${escapeXml(data.generalComment)}</drmd:comment>`;
+    }
+    if (data.binaryDocument && data.binaryDocument.data) {
+        extraXml += `
+  <drmd:document>${data.binaryDocument.data}</drmd:document>`;
+    }
+
     const footer = `
 </drmd:digitalReferenceMaterialDocument>`;
 
-    return header + adminXml + materialsXml + propertiesXml + statementsXml + footer;
+    return header + adminXml + materialsXml + propertiesXml + statementsXml + extraXml + footer;
 };

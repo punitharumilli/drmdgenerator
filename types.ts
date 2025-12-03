@@ -1,4 +1,5 @@
 
+
 export interface Identifier {
     scheme: string;
     value: string;
@@ -141,6 +142,13 @@ export interface DRMD {
     statements: Statements;
     comments: Comment[];
     documents: AdditionalDocument[];
+    // New fields for the "Comment and Document" tab
+    generalComment: string;
+    binaryDocument: {
+        fileName: string;
+        mimeType: string;
+        data: string; // Base64 data
+    } | null;
 }
 
 // Constants for Initial States
@@ -166,7 +174,7 @@ export const INITIAL_PERSON: ResponsiblePerson = {
     name: "",
     role: "",
     description: "",
-    mainSigner: true, // Defaulting to true as requested
+    mainSigner: false, // Default to false so only the first one (initialized manually) is true
     cryptElectronicSeal: false,
     cryptElectronicSignature: false,
     cryptElectronicTimeStamp: false
@@ -200,7 +208,7 @@ export const INITIAL_DRMD: DRMD = {
         dateOfIssue: new Date().toISOString().split('T')[0],
         specificTime: new Date().toISOString().split('T')[0],
         producers: [{ ...INITIAL_PRODUCER }],
-        responsiblePersons: [{ ...INITIAL_PERSON }]
+        responsiblePersons: [{ ...INITIAL_PERSON, mainSigner: true }] // First person defaults to Main Signer
     },
     materials: [],
     properties: [],
@@ -219,5 +227,7 @@ export const INITIAL_DRMD: DRMD = {
         custom: []
     },
     comments: [],
-    documents: []
+    documents: [],
+    generalComment: "",
+    binaryDocument: null
 };

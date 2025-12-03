@@ -1,4 +1,5 @@
 
+
 /**
  * Utility to convert human-readable units to machine-readable D-SI format.
  * Follows guidelines from the D-SI specifications (Platinum/Gold class).
@@ -11,10 +12,12 @@ export interface DsiConversion {
 }
 
 // STRICT D-SI MAPPING according to SmartCom D-SI Guide (Platinum/Gold)
+// Note: Factors are set to 1 when the D-SI unit string explicitly matches the input unit's scale (e.g., mg -> \milli\gram).
+// Factors are only used when the unit changes completely (e.g., lb -> \kilogram).
 const UNIT_MAP: Record<string, DsiConversion> = {
     // --- Dimensionless / Ratios ---
-    '%': { dsiUnit: '\\one', factor: 0.01 },
-    'percent': { dsiUnit: '\\one', factor: 0.01 },
+    '%': { dsiUnit: '\\percent', factor: 1 },
+    'percent': { dsiUnit: '\\percent', factor: 1 },
     'ppm': { dsiUnit: '\\one', factor: 1e-6 },
     'ppb': { dsiUnit: '\\one', factor: 1e-9 },
 
@@ -50,26 +53,26 @@ const UNIT_MAP: Record<string, DsiConversion> = {
     'cm²/g': { dsiUnit: '\\centi\\metre\\tothe{2}\\gram\\tothe{-1}', factor: 1 },
 
     // --- Mass ---
-    'mg': { dsiUnit: '\\milli\\gram', factor: 1e-6 }, 
-    'g': { dsiUnit: '\\gram', factor: 0.001 },       
+    'mg': { dsiUnit: '\\milli\\gram', factor: 1 }, 
+    'g': { dsiUnit: '\\gram', factor: 1 },       
     'kg': { dsiUnit: '\\kilogram', factor: 1 },
-    'ug': { dsiUnit: '\\micro\\gram', factor: 1e-9 },
-    'µg': { dsiUnit: '\\micro\\gram', factor: 1e-9 },
-    'μg': { dsiUnit: '\\micro\\gram', factor: 1e-9 },
+    'ug': { dsiUnit: '\\micro\\gram', factor: 1 },
+    'µg': { dsiUnit: '\\micro\\gram', factor: 1 },
+    'μg': { dsiUnit: '\\micro\\gram', factor: 1 },
     
     'lb': { dsiUnit: '\\kilogram', factor: 0.45359237 },
     'oz': { dsiUnit: '\\kilogram', factor: 0.02834959 },
-    't': { dsiUnit: '\\tonne', factor: 1000 }, 
+    't': { dsiUnit: '\\tonne', factor: 1000 }, // tonne to kg
 
     // --- Length ---
-    'nm': { dsiUnit: '\\nano\\metre', factor: 1e-9 },
-    'µm': { dsiUnit: '\\micro\\metre', factor: 1e-6 },
-    'μm': { dsiUnit: '\\micro\\metre', factor: 1e-6 }, // Greek mu
-    'um': { dsiUnit: '\\micro\\metre', factor: 1e-6 },
-    'mm': { dsiUnit: '\\milli\\metre', factor: 0.001 },
-    'cm': { dsiUnit: '\\centi\\metre', factor: 0.01 },
+    'nm': { dsiUnit: '\\nano\\metre', factor: 1 },
+    'µm': { dsiUnit: '\\micro\\metre', factor: 1 },
+    'μm': { dsiUnit: '\\micro\\metre', factor: 1 }, // Greek mu
+    'um': { dsiUnit: '\\micro\\metre', factor: 1 },
+    'mm': { dsiUnit: '\\milli\\metre', factor: 1 },
+    'cm': { dsiUnit: '\\centi\\metre', factor: 1 },
     'm': { dsiUnit: '\\metre', factor: 1 },
-    'km': { dsiUnit: '\\kilo\\metre', factor: 1000 },
+    'km': { dsiUnit: '\\kilo\\metre', factor: 1 },
     
     'inch': { dsiUnit: '\\metre', factor: 0.0254 },
     'in': { dsiUnit: '\\metre', factor: 0.0254 },
@@ -79,8 +82,8 @@ const UNIT_MAP: Record<string, DsiConversion> = {
     // --- Area ---
     'm2': { dsiUnit: '\\metre\\tothe{2}', factor: 1 },
     'm²': { dsiUnit: '\\metre\\tothe{2}', factor: 1 },
-    'cm2': { dsiUnit: '\\centi\\metre\\tothe{2}', factor: 0.0001 },
-    'cm²': { dsiUnit: '\\centi\\metre\\tothe{2}', factor: 0.0001 },
+    'cm2': { dsiUnit: '\\centi\\metre\\tothe{2}', factor: 1 },
+    'cm²': { dsiUnit: '\\centi\\metre\\tothe{2}', factor: 1 },
     
     // --- Density ---
     'g/cm3': { dsiUnit: '\\gram\\centi\\metre\\tothe{-3}', factor: 1 },
@@ -92,15 +95,15 @@ const UNIT_MAP: Record<string, DsiConversion> = {
     'K': { dsiUnit: '\\kelvin', factor: 1 },
     
     // --- Time ---
-    'h': { dsiUnit: '\\hour', factor: 3600 }, 
-    'min': { dsiUnit: '\\minute', factor: 60 },
+    'h': { dsiUnit: '\\hour', factor: 1 }, 
+    'min': { dsiUnit: '\\minute', factor: 1 },
     's': { dsiUnit: '\\second', factor: 1 },
     
     // --- Volume ---
-    'L': { dsiUnit: '\\litre', factor: 0.001 }, 
-    'l': { dsiUnit: '\\litre', factor: 0.001 },
-    'mL': { dsiUnit: '\\milli\\litre', factor: 1e-6 },
-    'ml': { dsiUnit: '\\milli\\litre', factor: 1e-6 },
+    'L': { dsiUnit: '\\litre', factor: 1 }, 
+    'l': { dsiUnit: '\\litre', factor: 1 },
+    'mL': { dsiUnit: '\\milli\\litre', factor: 1 },
+    'ml': { dsiUnit: '\\milli\\litre', factor: 1 },
     
     // --- Pressure ---
     'Pa': { dsiUnit: '\\pascal', factor: 1 },
@@ -110,15 +113,12 @@ const UNIT_MAP: Record<string, DsiConversion> = {
 };
 
 export const convertToDSI = (value: string | undefined | null | number, unit: string | undefined | null): { dsiValue: string, dsiUnit: string } => {
-    // 1. Safety check for value
-    if (value === undefined || value === null) {
-        return { dsiValue: "", dsiUnit: "" };
+    // 1. Safety check for inputs
+    let valStr = "";
+    if (value !== undefined && value !== null) {
+        valStr = String(value);
     }
-    
-    // Ensure value is a string before processing
-    const valStr = String(value);
 
-    // 2. Safety check for unit
     if (unit === undefined || unit === null) {
          // Some values are dimensionless or just don't have units
          return { dsiValue: "", dsiUnit: "" };
@@ -126,15 +126,15 @@ export const convertToDSI = (value: string | undefined | null | number, unit: st
 
     const safeUnit = String(unit);
     
-    // 3. Normalize Unit
+    // 2. Normalize Unit for Lookup
     // Remove "in " prefix (case insensitive), often found in table headers like "in mg/kg"
     let cleanUnit = safeUnit.replace(/^\s*in\s+/i, '').trim();
     
-    // Remove all whitespace
+    // Remove all whitespace for map key
     cleanUnit = cleanUnit.replace(/\s+/g, '');
     
-    // Try direct lookup
-    let conversion = UNIT_MAP[cleanUnit];
+    // 3. Find Conversion Rule
+    let conversion: DsiConversion | undefined = UNIT_MAP[cleanUnit];
     
     // Try case-insensitive lookup
     if (!conversion) {
@@ -155,32 +155,50 @@ export const convertToDSI = (value: string | undefined | null | number, unit: st
         }
     }
 
-    // 4. Parse Value
-    // Remove typical prefix operators like <, >, ~ for calculation
-    const numStr = valStr.replace(/[^0-9.eE-]/g, ''); 
-    const numValue = parseFloat(numStr);
+    let dsiUnit = "";
+    let factor = 1;
 
-    if (conversion && !isNaN(numValue)) {
-        let finalValue = numValue * conversion.factor;
-        
-        // Format to avoid floating point artifacts
-        let formattedValue = finalValue.toString();
-        
-        // For small numbers or large conversions, precision matters
-        if (conversion.factor !== 1) {
-             // Avoid 0.500000001 artifacts
-             formattedValue = Number(finalValue.toPrecision(6)).toString();
-        } else {
-            // If factor is 1, try to preserve original string format if it was just a unit swap
-            formattedValue = numStr;
-        }
-
-        return {
-            dsiValue: formattedValue,
-            dsiUnit: conversion.dsiUnit
-        };
+    // Determine target DSI Unit
+    if (conversion) {
+        dsiUnit = conversion.dsiUnit;
+        factor = conversion.factor;
+    } else if (cleanUnit.startsWith('\\')) {
+        // If unit already starts with backslash, assume it is valid DSI and pass through
+        dsiUnit = cleanUnit;
+        factor = 1;
+    } else {
+        // No conversion found, return empty strings
+        return { dsiValue: "", dsiUnit: "" };
     }
 
-    // Fallback: Return empty D-SI fields
-    return { dsiValue: "", dsiUnit: "" };
+    // 4. Calculate DSI Value
+    let dsiValue = "";
+    const numValue = parseFloat(numStr(valStr));
+
+    if (!isNaN(numValue)) {
+        if (factor !== 1) {
+             let finalValue = numValue * factor;
+             // Avoid 0.500000001 artifacts for conversions
+             dsiValue = Number(finalValue.toPrecision(6)).toString();
+        } else {
+            // If factor is 1, preserve original string format (trimmed)
+            // This allows preserving symbols like "<" or ">" if they were present in valStr, 
+            // provided we want to keep them. The calling code usually splits value/uncertainty.
+            // However, numStr stripped non-numeric. 
+            // If factor is 1, we trust the original string value more.
+            dsiValue = valStr.trim();
+        }
+    } else {
+        // Value is not a valid number (e.g., empty string, or complex text)
+        // If factor is 1, we can just pass the string through (e.g. "< 0.05")
+        if (factor === 1 && valStr.trim().length > 0) {
+            dsiValue = valStr.trim();
+        }
+        // If factor != 1, we cannot convert non-numeric text, so dsiValue remains empty.
+    }
+
+    return { dsiValue, dsiUnit };
 };
+
+// Helper to clean value string for number parsing
+const numStr = (s: string) => s.replace(/[^0-9.eE-]/g, '');

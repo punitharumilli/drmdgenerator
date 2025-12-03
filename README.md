@@ -10,6 +10,53 @@ This tool streamlines the digitization of Reference Material Documents. Instead 
 3.  **Review** the extracted data in a form with **interactive PDF highlighting**.
 4.  **Export** a validated XML file compliant with Digital Reference Material standards (including D-SI units).
 
+## 🔄 Detailed Workflow Architecture
+
+This project follows a strict linear data flow designed to transform unstructured PDF pixels into structured, schema-compliant XML.
+
+### Phase 1: Document Ingestion
+*   **User Action**: The user drags and drops a PDF file (e.g., a Certificate of Analysis) into the application.
+*   **Process**: The browser reads the file using the `FileReader` API and converts it into a **Base64 encoded string**.
+*   **PDF Rendering**: Simultaneously, `pdf.js` renders the document visually on the left side of the screen, creating a canvas layer that allows for coordinate-based overlays.
+
+### Phase 2: AI-Powered Extraction (Vision)
+*   **API Call**: The Base64 image data is sent to the **Google Gemini API** (Model: `gemini-2.5-flash`).
+*   **System Instruction**: The model receives a specialized prompt (`services/geminiService.ts`) that defines the strict JSON schema required. It is instructed to:
+    *   Identify "Administrative Data" (Producers, Expiry Dates).
+    *   Extract "Materials" and "Properties" (Tables of values).
+    *   **Crucially**: Return `[page, ymin, xmin, ymax, xmax]` coordinates for every extracted field and section.
+*   **Output**: Gemini returns a raw JSON object containing the structured text and the spatial coordinates of where that text is located in the document.
+
+### Phase 3: Intelligent Post-Processing & Normalization
+Before the user sees the data, the application cleans and transforms it:
+1.  **Unit Conversion (D-SI)**: The app scans all extracted units (e.g., `mg/kg`, `%`, `ppm`). It uses the `utils/unitConverter.ts` engine to map these to **Digital-SI (D-SI)** format (e.g., `\milli\gram\kilogram\tothe{-1}`).
+    *   *Rule*: If a unit is `%`, it is converted to `\percent` with a factor of `1` (preserving the visible value).
+2.  **Value Parsing**: It splits strings like "4.9 g" into a numerical Value (`4.9`) and a Unit (`g`). If the text is descriptive (e.g., "approx 10ml"), it is flagged as `noQuantity`.
+3.  **Date Normalization**: Validity periods like "Valid for 12 months" or "May 2025" are converted into ISO 8601 formats (`P1Y` or `2025-05-31`).
+
+### Phase 4: Interactive Review & Correction (UI)
+The user interacts with the split-screen interface:
+*   **Visual Highlighting**: When a user focuses on a field (e.g., "Material Name"), the app reads the coordinate metadata for that field. A **red overlay box** is drawn dynamically over the PDF on the left, showing exactly where the AI found that information.
+*   **Tabbed Organization**:
+    *   **Administrative**: Producer details, validity dates, responsible persons.
+    *   **Materials**: Description of the physical item and sample sizes.
+    *   **Properties**: Measurement tables (Name, Value, Uncertainty, Unit, k-factor, Probability).
+    *   **Comment & Document**: Allows adding general comments and embedding a binary file (PDF/DOCX) directly into the XML.
+*   **Manual Override**: The user can correct any AI errors. If "Main Signer" checkboxes need adjusting or values need tweaking, the React state updates instantly.
+
+### Phase 5: Validation
+*   **Schema Checks**: The app runs real-time validation against the DRMD/DCC schema rules.
+*   **Mandatory Fields**: Fields marked with an asterisk (`*`) (e.g., Name, Value, Unit) are checked.
+*   **Feedback**: If data is missing (e.g., no Producer defined), the "Validate & Export" tab shows a detailed error report and prevents export to ensure data integrity.
+
+### Phase 6: XML Serialization & Export
+*   **Generation**: Once validated, `utils/xmlGenerator.ts` constructs the final XML string.
+*   **Namespaces**: It applies the correct namespaces (`xmlns:dcc`, `xmlns:drmd`, `xmlns:si`).
+*   **Binary Embedding**: If a supplementary document was uploaded in Phase 4, it is Base64 encoded and embedded within the `<drmd:document>` tag.
+*   **Download**: The browser generates a `.xml` file and triggers a download for the user.
+
+---
+
 ## 🚀 Key Features
 
 *   **AI-Powered Extraction**: Uses `gemini-2.5-flash` to visually analyze the PDF structure, extracting nested tables, producer details, and complex validity periods.
@@ -67,38 +114,8 @@ graph TD
 | **`App.tsx`** | **UI Logic** | The main application controller. It manages the global `DRMD` state, handles file uploads, renders the PDF viewer, and manages the tabs (Admin, Materials, Properties). |
 | **`services/geminiService.ts`** | **AI Logic** | Communicates with the Google GenAI SDK. It contains the critical **System Instruction** that tells the model how to parse the PDF, including specific rules for **Coordinate Extraction** (ymin, xmin, etc.) and Table Exclusion logic. |
 | **`types.ts`** | **Data Model** | Defines the TypeScript interfaces (`DRMD`, `Producer`, `MeasurementResult`) that mirror the logical structure of a Reference Material Document. |
-| **`utils/unitConverter.ts`** | **Utility** | A specialized utility that maps standard units to the D-SI LaTeX-style format required for digital metrology (e.g., converting `%` to factor `0.01` and unit `\one`). |
+| **`utils/unitConverter.ts`** | **Utility** | A specialized utility that maps standard units to the D-SI LaTeX-style format required for digital metrology (e.g., converting `%` to factor `1` and unit `\percent`). |
 | **`utils/xmlGenerator.ts`** | **Output** | Converts the React state into the final XML string. It handles XML namespaces, valid element nesting, and string escaping. |
-
-## 🧠 How It Works
-
-### 1. Vision Analysis & Coordinate Extraction
-The application sends the PDF content as an image to Gemini. The prompt in `services/geminiService.ts` instructs the model to return a JSON object containing not just the text, but also `fieldCoordinates` and `sectionCoordinates`.
-
-*   **Field Coordinates**: The exact bounding box of a specific value (e.g., the material name).
-*   **Section Coordinates**: The bounding box of an entire block (e.g., a "Producer" block or a "Table").
-
-### 2. Highlighting Logic (`App.tsx`)
-The `PdfViewer` component receives these coordinates.
-1.  **Normalization**: The AI returns coordinates on a 0-1000 scale.
-2.  **Mapping**: The app maps these to the current pixel dimensions of the HTML5 Canvas.
-3.  **Rendering**: A DOM overlay (`div`) is drawn over the canvas to create the red highlight effect.
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant App
-    participant Gemini
-    
-    User->>App: Uploads PDF
-    App->>Gemini: Sends PDF Image + Schema
-    Note right of Gemini: Extract Data + Coordinates
-    Gemini-->>App: Returns JSON
-    App->>App: Auto-Convert Units (mg/kg -> D-SI)
-    App-->>User: Displays Form
-    User->>App: Focuses "Material Name"
-    App->>App: Draws Red Box on PDF at [y, x, y2, x2]
-```
 
 ## ⚙️ Setup & Usage
 
@@ -118,14 +135,9 @@ The converter supports Platinum/Gold class units from the SmartCom D-SI Guide.
 | Input | D-SI Unit | Factor |
 | :--- | :--- | :--- |
 | `mg/kg` | `\milli\gram\kilogram\tothe{-1}` | `1` |
-| `ppm` | `\one` | `1e-6` |
+| `%` | `\percent` | `1` |
 | `µm` | `\micro\metre` | `1e-6` |
 | `g/cm3` | `\gram\centi\metre\tothe{-3}` | `1` |
-
-## ⚠️ Customization Notes
-
-*   **Table Exclusion**: The AI instructions explicitly exclude "Means of Accepted Data Sets" and raw statistical data tables to focus purely on Certified and Informative values.
-*   **Validities**: The app intelligently parses "Valid for X months" vs "Valid until YYYY-MM-DD" into the correct XML structures.
 
 ---
 *Documentation for Digital Reference Material Generator v0.3.0*

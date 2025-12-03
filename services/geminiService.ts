@@ -1,4 +1,5 @@
 
+
 import { GoogleGenAI, Type } from "@google/genai";
 import { DRMD } from "../types";
 import { convertToDSI } from "../utils/unitConverter";
@@ -294,6 +295,20 @@ const RESPONSE_SCHEMA = {
     }
 } as const;
 
+// Helper to convert primitive value strings to DSI format for display
+const convertPrimitiveToDSI = (val: string) => {
+    if (!val) return null;
+    const regex = /^([\d.]+(?:[eE][+-]?\d+)?)\s*(\S.*)$/;
+    const match = val.trim().match(regex);
+    if (match) {
+        const dsi = convertToDSI(match[1], match[2]);
+        if (dsi.dsiUnit) {
+            return `${dsi.dsiValue} ${dsi.dsiUnit}`;
+        }
+    }
+    return null;
+};
+
 export const extractStructuredDataFromPdf = async (base64Pdf: string, apiKey: string): Promise<Partial<DRMD>> => {
     const ai = new GoogleGenAI({ apiKey: apiKey });
 
@@ -324,7 +339,7 @@ export const extractStructuredDataFromPdf = async (base64Pdf: string, apiKey: st
         
         const parsedData = JSON.parse(jsonText) as Partial<DRMD>;
 
-        // Post-processing: Calculate D-SI values
+        // Post-processing: Calculate D-SI values for Table Quantities
         if (parsedData.properties) {
              parsedData.properties.forEach(prop => {
                  if (prop.results) {
@@ -339,6 +354,38 @@ export const extractStructuredDataFromPdf = async (base64Pdf: string, apiKey: st
                      });
                  }
              });
+        }
+
+        // Post-processing: Convert Material Quantities to DSI string format for UI display
+        // STRICT RULE: If the extracted string is a description (not value+unit), replace with "noQuantity"
+        if (parsedData.materials) {
+            parsedData.materials.forEach(mat => {
+                // Handle Minimum Sample Size
+                if (mat.minimumSampleSize) {
+                    const dsiFormat = convertPrimitiveToDSI(mat.minimumSampleSize);
+                    if (dsiFormat) {
+                        mat.minimumSampleSize = dsiFormat;
+                    } else {
+                        // Not a valid Value+Unit pair -> default to noQuantity
+                        mat.minimumSampleSize = "noQuantity";
+                    }
+                } else {
+                    mat.minimumSampleSize = "noQuantity";
+                }
+
+                // Handle Item Quantities
+                if (mat.itemQuantities) {
+                    const dsiFormat = convertPrimitiveToDSI(mat.itemQuantities);
+                    if (dsiFormat) {
+                        mat.itemQuantities = dsiFormat;
+                    } else {
+                        // Not a valid Value+Unit pair -> default to noQuantity
+                        mat.itemQuantities = "noQuantity";
+                    }
+                } else {
+                    mat.itemQuantities = "noQuantity";
+                }
+            });
         }
 
         return parsedData;

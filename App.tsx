@@ -6,6 +6,7 @@ import {
 import { extractStructuredDataFromPdf } from './services/geminiService';
 import { generateDrmdXml } from './utils/xmlGenerator';
 import { convertToDSI } from './utils/unitConverter';
+import { parseDrmdXml } from './utils/xmlParser';
 
 // Helper for UUIDs
 const generateUUID = () => {
@@ -231,7 +232,9 @@ const App: React.FC = () => {
   const [statusMessage, setStatusMessage] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [highlightData, setHighlightData] = useState<HighlightData | null>(null);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const xmlInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setDrmdData(prev => {
@@ -314,7 +317,7 @@ const App: React.FC = () => {
                       name: m.name || "",
                       description: m.description || "",
                       materialClass: m.materialClass || "", 
-                      itemQuantities: m.itemQuantities || "1",
+                      itemQuantities: m.itemQuantities || "", // Removed default "1" to allow empty/noQuantity
                       minimumSampleSize: m.minimumSampleSize || "",
                       isCertified: !!m.isCertified,
                       fieldCoordinates: m.fieldCoordinates,
@@ -462,12 +465,14 @@ const App: React.FC = () => {
                   });
 
                   // Strict Mapping for Responsible Persons
-                  const newPersons = (extractedData?.administrativeData?.responsiblePersons || []).map((p: any) => ({
+                  // All new persons default to mainSigner: false (from updated INITIAL_PERSON)
+                  const newPersons = (extractedData?.administrativeData?.responsiblePersons || []).map((p: any, index: number) => ({
                       ...INITIAL_PERSON, 
                       uuid: generateUUID(), 
                       name: p.name || "", 
                       role: p.role || "", 
                       description: p.description || "",
+                      mainSigner: index === 0, // Only the first extracted person is the main signer
                       fieldCoordinates: p.fieldCoordinates,
                       sectionCoordinates: p.sectionCoordinates
                   }));
@@ -532,6 +537,55 @@ const App: React.FC = () => {
       };
       reader.readAsDataURL(file);
     }
+  };
+
+  const handleXmlImport = (event: React.ChangeEvent<HTMLInputElement>) => {
+      if (event.target.files && event.target.files[0]) {
+          const file = event.target.files[0];
+          setIsProcessing(true);
+          setStatusMessage("Parsing XML...");
+          
+          const reader = new FileReader();
+          reader.onload = (e) => {
+              try {
+                  const xmlContent = e.target?.result as string;
+                  const parsedData = parseDrmdXml(xmlContent);
+                  
+                  // Check for binary document and load it if present
+                  if (parsedData.binaryDocument && parsedData.binaryDocument.data) {
+                      try {
+                          // Convert base64 to blob
+                          const byteCharacters = atob(parsedData.binaryDocument.data);
+                          const byteNumbers = new Array(byteCharacters.length);
+                          for (let i = 0; i < byteCharacters.length; i++) {
+                              byteNumbers[i] = byteCharacters.charCodeAt(i);
+                          }
+                          const byteArray = new Uint8Array(byteNumbers);
+                          const blob = new Blob([byteArray], {type: 'application/pdf'}); // Assume PDF for viewer
+                          const pdfUrl = URL.createObjectURL(blob);
+                          setPdfUrl(pdfUrl);
+                      } catch (err) {
+                          console.warn("Failed to load embedded PDF from XML", err);
+                      }
+                  } else {
+                      setPdfUrl(null);
+                  }
+
+                  setDrmdData(parsedData);
+                  setActiveTab("admin");
+                  setError(null);
+              } catch (err) {
+                  setError("Failed to parse XML file. Please ensure it is a valid DRMD format.");
+                  console.error(err);
+              } finally {
+                  setIsProcessing(false);
+                  setStatusMessage("");
+              }
+          };
+          reader.readAsText(file);
+          // Reset input value so same file can be selected again
+          event.target.value = "";
+      }
   };
 
   const handleExport = () => {
@@ -679,12 +733,9 @@ const App: React.FC = () => {
                          <div>
                             <TextArea label="Description" value={rp.description} onFocus={() => handleHighlight(rp.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.administrativeData.responsiblePersons]; list[idx].description = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, responsiblePersons: list}})); }} onInfoClick={() => handleHighlight(rp.sectionCoordinates)} />
                          </div>
-                         <div className="bg-gray-50 p-3 rounded">
-                            <div className="text-xs font-bold text-gray-500 uppercase mb-2">Digital Signature Options</div>
+                         <div className="bg-gray-50 p-3 rounded flex items-center">
                             <div className="space-y-2">
-                                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer"><input type="checkbox" checked={rp.mainSigner} onChange={(e) => { const list = [...drmdData.administrativeData.responsiblePersons]; list[idx].mainSigner = e.target.checked; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, responsiblePersons: list}})); }} /> Main Signer</label>
-                                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer"><input type="checkbox" checked={rp.cryptElectronicSeal} onChange={(e) => { const list = [...drmdData.administrativeData.responsiblePersons]; list[idx].cryptElectronicSeal = e.target.checked; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, responsiblePersons: list}})); }} /> Electronic Seal</label>
-                                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer"><input type="checkbox" checked={rp.cryptElectronicSignature} onChange={(e) => { const list = [...drmdData.administrativeData.responsiblePersons]; list[idx].cryptElectronicSignature = e.target.checked; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, responsiblePersons: list}})); }} /> Electronic Signature</label>
+                                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer font-bold"><input type="checkbox" checked={rp.mainSigner} onChange={(e) => { const list = [...drmdData.administrativeData.responsiblePersons]; list[idx].mainSigner = e.target.checked; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, responsiblePersons: list}})); }} /> Main Signer</label>
                             </div>
                          </div>
                      </div>
@@ -715,7 +766,7 @@ const App: React.FC = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-3">
                         {/* Use fieldCoordinates for Name (specific field) or fallback to text search */}
-                        <Input label="Material Name *" value={mat.name} onFocus={() => handleHighlight(mat.fieldCoordinates?.['name'] || mat.name)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].name = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.fieldCoordinates?.['name'] || mat.name)} />
+                        <Input label="Name *" value={mat.name} onFocus={() => handleHighlight(mat.fieldCoordinates?.['name'] || mat.name)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].name = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.fieldCoordinates?.['name'] || mat.name)} />
                         
                         {/* Keep sectionCoordinates for other fields as requested by user ("rest all are working perfectly") */}
                         <Input label="Material Class" value={mat.materialClass} onFocus={() => handleHighlight(mat.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].materialClass = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.sectionCoordinates)} />
@@ -727,9 +778,6 @@ const App: React.FC = () => {
                          <div className="grid grid-cols-2 gap-4 items-end">
                              {/* CHANGED: Use 'intendedUse' coordinates for Min Sample Size as it typically resides in the Recommended Use paragraph */}
                              <Input label="Min Sample Size (e.g. 4.9 g) *" value={mat.minimumSampleSize} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['intendedUse'] || mat.fieldCoordinates?.['minimumSampleSize'] || mat.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].minimumSampleSize = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['intendedUse'] || mat.fieldCoordinates?.['minimumSampleSize'] || mat.sectionCoordinates)} />
-                             <div className="pb-2">
-                                <label className="flex items-center gap-2 font-bold text-gray-700 cursor-pointer"><input type="checkbox" checked={mat.isCertified} onChange={(e) => { const list = [...drmdData.materials]; list[idx].isCertified = e.target.checked; setDrmdData(p => ({...p, materials: list})); }} /> Certified</label>
-                             </div>
                          </div>
                     </div>
                 </div>
@@ -798,18 +846,20 @@ const App: React.FC = () => {
                                         <table className="min-w-full divide-y divide-gray-200 text-xs">
                                             <thead className="bg-gray-100">
                                                 <tr>
-                                                    <th className="px-2 py-2 text-left w-24">Element</th>
-                                                    <th className="px-2 py-2 text-left w-24">Value</th>
-                                                    <th className="px-2 py-2 text-left w-20">Unit</th>
-                                                    <th className="px-2 py-2 text-left w-40">D-SI (Auto)</th>
+                                                    <th className="px-2 py-2 text-left w-32">Name *</th>
+                                                    <th className="px-2 py-2 text-left w-24">Value *</th>
                                                     <th className="px-2 py-2 text-left w-24">Uncertainty</th>
-                                                    <th className="px-2 py-2 text-left w-16">k-Factor</th>
+                                                    <th className="px-2 py-2 text-left w-20">Unit *</th>
+                                                    <th className="px-2 py-2 text-left w-24">DSI Unit *</th>
+                                                    <th className="px-2 py-2 text-left w-16">k factor</th>
+                                                    <th className="px-2 py-2 text-left w-24">Probability</th>
                                                     <th className="px-2 py-2 w-10"></th>
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y divide-gray-200">
                                                 {res.quantities.map((q, qIdx) => (
                                                     <tr key={q.uuid} className="hover:bg-gray-50 group">
+                                                        {/* Name */}
                                                         <td className="p-1 relative">
                                                             <input 
                                                                 className="w-full border-b border-transparent group-hover:border-gray-300 outline-none bg-transparent pr-4" 
@@ -818,6 +868,7 @@ const App: React.FC = () => {
                                                                 onChange={(e) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].name = e.target.value; setDrmdData(p => ({...p, properties: list})); }} 
                                                             />
                                                         </td>
+                                                        {/* Value */}
                                                         <td className="p-1 relative group-td">
                                                             <input 
                                                                 className="w-full border-b border-transparent group-hover:border-gray-300 outline-none bg-transparent pr-4" 
@@ -833,6 +884,16 @@ const App: React.FC = () => {
                                                                 }} 
                                                             />
                                                         </td>
+                                                        {/* Uncertainty */}
+                                                        <td className="p-1 relative">
+                                                            <input 
+                                                                className="w-full border-b border-transparent group-hover:border-gray-300 outline-none bg-transparent pr-4" 
+                                                                value={q.uncertainty} 
+                                                                onFocus={() => handleHighlight(res.sectionCoordinates)}
+                                                                onChange={(e) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].uncertainty = e.target.value; setDrmdData(p => ({...p, properties: list})); }} 
+                                                            />
+                                                        </td>
+                                                        {/* Unit */}
                                                         <td className="p-1 relative">
                                                             <input 
                                                                 className="w-full border-b border-transparent group-hover:border-gray-300 outline-none bg-transparent pr-4" 
@@ -848,20 +909,17 @@ const App: React.FC = () => {
                                                                 }} 
                                                             />
                                                         </td>
+                                                        {/* DSI Unit (Display Only) */}
                                                         <td className="p-1">
                                                             <div className="w-full border-b border-transparent bg-gray-50 text-gray-600 text-xs px-1 py-2 overflow-x-auto whitespace-nowrap font-mono">
-                                                                {q.dsiValue} {q.dsiUnit}
+                                                                {q.dsiUnit}
                                                             </div>
                                                         </td>
-                                                        <td className="p-1 relative">
-                                                            <input 
-                                                                className="w-full border-b border-transparent group-hover:border-gray-300 outline-none bg-transparent pr-4" 
-                                                                value={q.uncertainty} 
-                                                                onFocus={() => handleHighlight(res.sectionCoordinates)}
-                                                                onChange={(e) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].uncertainty = e.target.value; setDrmdData(p => ({...p, properties: list})); }} 
-                                                            />
-                                                        </td>
+                                                        {/* k factor */}
                                                         <td className="p-1"><input className="w-full border-b border-transparent group-hover:border-gray-300 outline-none bg-transparent" value={q.coverageFactor} onChange={(e) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].coverageFactor = e.target.value; setDrmdData(p => ({...p, properties: list})); }} /></td>
+                                                        {/* Probability */}
+                                                        <td className="p-1"><input className="w-full border-b border-transparent group-hover:border-gray-300 outline-none bg-transparent" value={q.coverageProbability} onChange={(e) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].coverageProbability = e.target.value; setDrmdData(p => ({...p, properties: list})); }} /></td>
+                                                        {/* Delete */}
                                                         <td className="p-1 text-center"><button onClick={() => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities.splice(qIdx, 1); setDrmdData(p => ({...p, properties: list})); }} className="text-red-400 hover:text-red-600">×</button></td>
                                                     </tr>
                                                 ))}
@@ -877,6 +935,21 @@ const App: React.FC = () => {
                                     </div>
                                 </div>
                             ))}
+                            <button 
+                                onClick={() => {
+                                    const list = [...drmdData.properties];
+                                    list[pIdx].results.push({
+                                        uuid: generateUUID(),
+                                        name: "",
+                                        description: "",
+                                        quantities: [{ ...INITIAL_QUANTITY, uuid: generateUUID(), identifiers: [] }]
+                                    });
+                                    setDrmdData(p => ({...p, properties: list}));
+                                }}
+                                className="w-full py-2 border-2 border-dashed border-indigo-200 bg-indigo-50/50 text-indigo-600 rounded-lg hover:bg-indigo-50 hover:border-indigo-300 transition-colors font-medium text-sm flex items-center justify-center gap-2"
+                            >
+                                <span className="text-lg font-bold">+</span> Add Table
+                            </button>
                         </div>
                    </div>
               </div>
@@ -914,15 +987,102 @@ const App: React.FC = () => {
       </div>
   );
 
-  const renderComments = () => (
+  const renderCommentAndDocument = () => {
+    const handleDocUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files && e.target.files[0]) {
+            const file = e.target.files[0];
+            
+            // Validation: Size (200MB)
+            if (file.size > 200 * 1024 * 1024) {
+                alert("File size exceeds 200MB limit.");
+                return;
+            }
+
+            // Validation: Type (Simple check on extension/mime)
+            const allowedTypes = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain'];
+            // Also check extensions for robustness
+            const allowedExts = ['pdf', 'doc', 'docx', 'txt'];
+            const ext = file.name.split('.').pop()?.toLowerCase();
+
+            if (!allowedTypes.includes(file.type) && !allowedExts.includes(ext || '')) {
+                alert("Only PDF, DOC, DOCX, and TXT files are allowed.");
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                const base64String = reader.result as string;
+                // Remove data URL prefix (e.g. "data:application/pdf;base64,")
+                const base64Data = base64String.split(',')[1];
+                
+                setDrmdData(p => ({
+                    ...p, 
+                    binaryDocument: {
+                        fileName: file.name,
+                        mimeType: file.type || "application/octet-stream",
+                        data: base64Data
+                    }
+                }));
+            };
+            reader.readAsDataURL(file);
+        }
+    };
+
+    return (
       <div className="space-y-6 animate-fadeIn">
-          <SectionHeader title="Comments & Documents" icon="💬" />
-          <div className="p-10 text-center border-2 border-dashed border-gray-300 rounded-lg bg-gray-50">
-              <p className="text-gray-500 font-medium">Feature to add comments and attach additional documents (PDF/Images) is coming soon.</p>
-              <p className="text-xs text-gray-400 mt-2">This will allow attaching raw data logs or reviewer notes to the XML package.</p>
+          <SectionHeader title="Comment and Document" icon="💬" />
+          
+          <div className="space-y-4">
+              <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Comment</h3>
+              <textarea 
+                  className="w-full border border-gray-300 rounded-md p-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none h-32"
+                  placeholder="Enter your comment"
+                  value={drmdData.generalComment}
+                  onChange={(e) => setDrmdData(p => ({...p, generalComment: e.target.value}))}
+              />
+          </div>
+
+          <div className="space-y-2">
+              <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Upload Document</h3>
+              
+              {!drmdData.binaryDocument ? (
+                  <div className="border-2 border-dashed border-indigo-200 bg-indigo-50/30 rounded-lg p-8 flex flex-col items-center justify-center text-center transition hover:bg-indigo-50">
+                      <div className="text-4xl mb-2 text-indigo-300">☁️</div>
+                      <p className="font-medium text-gray-700">Drag and drop file here</p>
+                      <p className="text-xs text-gray-500 mt-1 mb-4">Limit 200MB per file • PDF, DOC, DOCX, TXT</p>
+                      <input 
+                          type="file" 
+                          id="doc-upload"
+                          className="hidden" 
+                          accept=".pdf,.doc,.docx,.txt"
+                          onChange={handleDocUpload}
+                      />
+                      <label htmlFor="doc-upload" className="cursor-pointer bg-white border border-gray-300 px-4 py-2 rounded-md text-sm font-medium hover:bg-gray-50 text-gray-700 shadow-sm">
+                          Browse files
+                      </label>
+                  </div>
+              ) : (
+                  <div className="bg-white border border-gray-200 rounded-lg p-4 flex items-center justify-between shadow-sm">
+                      <div className="flex items-center gap-3">
+                          <div className="text-2xl">📄</div>
+                          <div>
+                              <p className="font-bold text-sm text-gray-800">{drmdData.binaryDocument.fileName}</p>
+                              <p className="text-xs text-gray-500">Document attached</p>
+                          </div>
+                      </div>
+                      <button 
+                          onClick={() => setDrmdData(p => ({...p, binaryDocument: null}))}
+                          className="text-red-500 hover:text-red-700 p-2"
+                          title="Remove file"
+                      >
+                          ✕
+                      </button>
+                  </div>
+              )}
           </div>
       </div>
-  );
+    );
+  };
 
   const renderValidateExport = () => {
     const getValidationReport = () => {
@@ -1074,9 +1234,16 @@ const App: React.FC = () => {
         </div>
         <div className="flex gap-3">
           <input type="file" accept="application/pdf" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
+          <input type="file" accept="text/xml" ref={xmlInputRef} onChange={handleXmlImport} className="hidden" />
+          
           <button onClick={() => fileInputRef.current?.click()} className="bg-gray-100 hover:bg-gray-200 transition px-4 py-2 rounded-md text-sm font-medium flex items-center gap-2 text-gray-700 border border-gray-300">
             📄 Upload PDF
           </button>
+          
+          <button onClick={() => xmlInputRef.current?.click()} className="bg-gray-100 hover:bg-gray-200 transition px-4 py-2 rounded-md text-sm font-medium flex items-center gap-2 text-gray-700 border border-gray-300">
+            📤 Import XML
+          </button>
+
           <button onClick={handleExport} className="bg-indigo-600 text-white hover:bg-indigo-700 transition px-4 py-2 rounded-md text-sm font-bold flex items-center gap-2 shadow-sm">
             💾 Export XML
           </button>
@@ -1122,7 +1289,7 @@ const App: React.FC = () => {
                 { id: 'materials', label: 'Materials', icon: '🧪' },
                 { id: 'properties', label: 'Properties', icon: '📊' },
                 { id: 'statements', label: 'Statements', icon: '📝' },
-                { id: 'comments', label: 'Comments', icon: '💬' },
+                { id: 'comment-document', label: 'Comment and Document', icon: '💬' },
                 { id: 'validate-export', label: 'Validate & Export', icon: '✅' },
                 { id: 'settings', label: 'Settings', icon: '⚙️' }
             ].map(tab => (
@@ -1147,7 +1314,7 @@ const App: React.FC = () => {
             {activeTab === 'materials' && renderMaterials()}
             {activeTab === 'properties' && renderProperties()}
             {activeTab === 'statements' && renderStatements()}
-            {activeTab === 'comments' && renderComments()}
+            {activeTab === 'comment-document' && renderCommentAndDocument()}
             {activeTab === 'validate-export' && renderValidateExport()}
           </div>
         </div>
