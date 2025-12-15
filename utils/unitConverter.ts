@@ -20,6 +20,9 @@ const UNIT_MAP: Record<string, DsiConversion> = {
     'percent': { dsiUnit: '\\percent', factor: 1 },
     'ppm': { dsiUnit: '\\one', factor: 1e-6 },
     'ppb': { dsiUnit: '\\one', factor: 1e-9 },
+    'one': { dsiUnit: '\\one', factor: 1 },
+    '/one': { dsiUnit: '\\one', factor: 1 },
+    '\\one': { dsiUnit: '\\one', factor: 1 },
 
     // --- Mass Fractions ---
     'mg/kg': { dsiUnit: '\\milli\\gram\\kilogram\\tothe{-1}', factor: 1 }, 
@@ -202,3 +205,27 @@ export const convertToDSI = (value: string | undefined | null | number, unit: st
 
 // Helper to clean value string for number parsing
 const numStr = (s: string) => s.replace(/[^0-9.eE-]/g, '');
+
+/**
+ * Parses a raw string (e.g., "4.9 g" or "10 ml") and returns a DSI formatted preview string (e.g., "4.9 \gram").
+ * Returns empty string if the format is not recognized or input is empty.
+ */
+export const getDsiPreview = (raw: string): string => {
+    if (!raw) return "";
+    
+    // Regex to find "Number" then "Unit"
+    // e.g. "4.9 g", "10 ml", "100 %"
+    // Does NOT match "approx 5 g" (starts with text)
+    const regex = /^([\d.]+(?:[eE][+-]?\d+)?)\s*(\S.*)$/;
+    const match = raw.trim().match(regex);
+    
+    if (match) {
+        const numPart = match[1];
+        const unitPart = match[2];
+        const dsi = convertToDSI(numPart, unitPart);
+        if (dsi.dsiUnit) {
+            return `${dsi.dsiValue} ${dsi.dsiUnit}`;
+        }
+    }
+    return "";
+};

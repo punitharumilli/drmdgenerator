@@ -3,10 +3,11 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
     DRMD, INITIAL_DRMD, INITIAL_PRODUCER, INITIAL_PERSON, INITIAL_ID, INITIAL_QUANTITY, ALLOWED_TITLES
 } from './types';
-import { extractStructuredDataFromPdf } from './services/geminiService';
+import { extractStructuredDataFromPdf } from './services/llmService';
 import { generateDrmdXml } from './utils/xmlGenerator';
-import { convertToDSI } from './utils/unitConverter';
+import { convertToDSI, getDsiPreview } from './utils/unitConverter';
 import { parseDrmdXml } from './utils/xmlParser';
+import { getCasNumber } from './utils/casMapping';
 
 // Helper for UUIDs
 const generateUUID = () => {
@@ -305,9 +306,6 @@ const App: React.FC = () => {
                    }
               }
               
-              // Helper to safely clean postal code
-              const cleanPostalCode = (pc: string | undefined) => pc ? pc.replace(/[^0-9]/g, '') : "";
-
               setDrmdData(prev => {
                   // Strict Mapping for Materials
                   const newMats = (extractedData?.materials || []).map((m: any) => ({
@@ -384,6 +382,45 @@ const App: React.FC = () => {
 
                   const newProps = Object.values(propertyMap).map((p: any) => {
                       const finalResults = (p.results || []).map((r: any) => {
+                          // FALLBACK EXTRACTION LOGIC:
+                          // If k factor or probability are not explicitly on the row items, 
+                          // check the table description/footer or parent property description for them.
+                          const desc = (r.description || "").toLowerCase();
+                          const parentDesc = (p.description || "").toLowerCase();
+                          
+                          // Helper to extract K (k=2, k = 2.0)
+                          const getK = (s: string) => {
+                              const m = s.match(/k\s*=\s*(\d+(\.\d+)?)/i);
+                              return m ? m[1] : "";
+                          };
+                          
+                          // Helper to extract Prob (95% confidence, confidence level 95%)
+                          const getProb = (s: string) => {
+                               // Match "95% confidence"
+                               const m1 = s.match(/(\d+(?:\.\d+)?)\s*%\s*confidence/i);
+                               if (m1) return m1[1];
+                               // Match "confidence...95%"
+                               const m2 = s.match(/confidence.*?(\d+(?:\.\d+)?)\s*%/i);
+                               if (m2) return m2[1];
+                               return "";
+                          };
+
+                          let defaultK = getK(desc) || getK(parentDesc);
+                          let defaultProb = getProb(desc) || getProb(parentDesc);
+
+                          // Fallback: if K is found but Prob is not, look for loose "95%" anywhere
+                          if (defaultK && !defaultProb) {
+                               const combined = desc + " " + parentDesc;
+                               const m3 = combined.match(/(\d+(?:\.\d+)?)\s*%/);
+                               if (m3) defaultProb = m3[1];
+                          }
+
+                          // Normalize prob: convert "95" to "0.95"
+                          if (defaultProb) {
+                               const val = parseFloat(defaultProb);
+                               if (val > 1) defaultProb = (val / 100).toString();
+                          }
+
                           const qs = (r.quantities || []).map((q: any) => {
                               let finalValue = q.value || "";
                               let finalUncertainty = q.uncertainty || "";
@@ -393,18 +430,35 @@ const App: React.FC = () => {
                                   finalUncertainty = "";
                               }
 
-                              const dsi = convertToDSI(finalValue, q.unit);
+                              // Determine final k and p
+                              let finalK = q.coverageFactor || "";
+                              let finalProb = q.coverageProbability || "";
+                              
+                              // Apply fallback if missing and uncertainty exists
+                              if (!finalK && q.uncertainty && defaultK) {
+                                  finalK = defaultK;
+                              }
+                              if (!finalProb && q.uncertainty && defaultProb) {
+                                  finalProb = defaultProb;
+                              }
+
+                              let finalUnit = q.unit || "";
+                              if (!finalUnit.trim()) {
+                                  finalUnit = "\\one";
+                              }
+
+                              const dsi = convertToDSI(finalValue, finalUnit);
                               return {
                                   ...q, 
                                   uuid: generateUUID(), 
                                   identifiers: [{...INITIAL_ID}],
                                   name: q.name || "",
                                   value: finalValue, 
-                                  unit: q.unit || "", 
+                                  unit: finalUnit, 
                                   uncertainty: finalUncertainty, 
-                                  coverageFactor: q.coverageFactor || "2.0",
-                                  coverageProbability: q.coverageProbability || "0.95",
-                                  distribution: q.distribution || "normal",
+                                  coverageFactor: finalK, 
+                                  coverageProbability: finalProb,
+                                  distribution: q.distribution || "",
                                   dsiValue: dsi.dsiValue,
                                   dsiUnit: dsi.dsiUnit,
                                   fieldCoordinates: q.fieldCoordinates
@@ -455,7 +509,7 @@ const App: React.FC = () => {
                           address: { 
                               street: p.address?.street || "",
                               streetNo: p.address?.streetNo || "",
-                              postCode: cleanPostalCode(p.address?.postCode),
+                              postCode: p.address?.postCode || "",
                               city: p.address?.city || "",
                               countryCode: countryCode
                           },
@@ -770,14 +824,26 @@ const App: React.FC = () => {
                         
                         {/* Keep sectionCoordinates for other fields as requested by user ("rest all are working perfectly") */}
                         <Input label="Material Class" value={mat.materialClass} onFocus={() => handleHighlight(mat.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].materialClass = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.sectionCoordinates)} />
-                        <Input label="Item Quantities" value={mat.itemQuantities} onFocus={() => handleHighlight(mat.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].itemQuantities = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.sectionCoordinates)} />
+                        
+                        {/* Item Quantities with DSI Preview */}
+                        <div className="space-y-1">
+                            <Input label="Item Quantities" value={mat.itemQuantities} onFocus={() => handleHighlight(mat.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].itemQuantities = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.sectionCoordinates)} />
+                            <div className="w-full border border-gray-200 bg-gray-50 rounded-md p-2 text-xs font-mono text-gray-600 truncate">
+                                {getDsiPreview(mat.itemQuantities)}
+                            </div>
+                        </div>
                     </div>
                     <div className="space-y-3">
                          {/* Modified to prefer specific field coordinates if available */}
                          <TextArea label="Description" value={mat.description} onFocus={() => handleHighlight(mat.fieldCoordinates?.['description'] || mat.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].description = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.fieldCoordinates?.['description'] || mat.sectionCoordinates)} />
                          <div className="grid grid-cols-2 gap-4 items-end">
                              {/* CHANGED: Use 'intendedUse' coordinates for Min Sample Size as it typically resides in the Recommended Use paragraph */}
-                             <Input label="Min Sample Size (e.g. 4.9 g) *" value={mat.minimumSampleSize} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['intendedUse'] || mat.fieldCoordinates?.['minimumSampleSize'] || mat.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].minimumSampleSize = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['intendedUse'] || mat.fieldCoordinates?.['minimumSampleSize'] || mat.sectionCoordinates)} />
+                             <div className="space-y-1">
+                                <Input label="Min Sample Size (e.g. 4.9 g) *" value={mat.minimumSampleSize} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['intendedUse'] || mat.fieldCoordinates?.['minimumSampleSize'] || mat.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].minimumSampleSize = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['intendedUse'] || mat.fieldCoordinates?.['minimumSampleSize'] || mat.sectionCoordinates)} />
+                                <div className="w-full border border-gray-200 bg-gray-50 rounded-md p-2 text-xs font-mono text-gray-600 truncate">
+                                    {getDsiPreview(mat.minimumSampleSize)}
+                                </div>
+                             </div>
                          </div>
                     </div>
                 </div>
@@ -847,6 +913,7 @@ const App: React.FC = () => {
                                             <thead className="bg-gray-100">
                                                 <tr>
                                                     <th className="px-2 py-2 text-left w-32">Name *</th>
+                                                    <th className="px-2 py-2 text-left w-24">CAS</th>
                                                     <th className="px-2 py-2 text-left w-24">Value *</th>
                                                     <th className="px-2 py-2 text-left w-24">Uncertainty</th>
                                                     <th className="px-2 py-2 text-left w-20">Unit *</th>
@@ -867,6 +934,12 @@ const App: React.FC = () => {
                                                                 onFocus={() => handleHighlight(res.sectionCoordinates)} // Focus entire table when editing cell
                                                                 onChange={(e) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].name = e.target.value; setDrmdData(p => ({...p, properties: list})); }} 
                                                             />
+                                                        </td>
+                                                        {/* CAS Number (Auto) */}
+                                                        <td className="p-1">
+                                                            <div className="w-full border-b border-transparent bg-gray-50 text-gray-600 text-xs px-1 py-2 overflow-x-auto whitespace-nowrap font-mono">
+                                                                {getCasNumber(q.name) || "-"}
+                                                            </div>
                                                         </td>
                                                         {/* Value */}
                                                         <td className="p-1 relative group-td">

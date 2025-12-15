@@ -61,6 +61,10 @@ Key Extraction Rules:
      - **DO NOT** put table-specific footnotes in the 'MaterialProperty' description field. Keep the property description for general text.
    - **COLUMN MAPPING**:
      - Values like "< 2" or "> 100" are VALUES. Put them in 'value'. Leave 'uncertainty' empty.
+   - **UNCERTAINTY & COVERAGE (CRITICAL)**:
+     - **Coverage Factor (k)**: Look for text like "k=2", "k = 2", or "coverage factor k=2" in table captions, footnotes, or the text surrounding the table. Extract the value (e.g., "2") into the 'coverageFactor' field for EACH quantity.
+     - **Probability**: Look for confidence levels like "95%", "95 % confidence", "level of confidence 95%". Extract as "0.95" (if found as 95%) or "95 %".
+     - **Inheritance**: If "k=2" or "95%" is mentioned in the table footer/description, you **MUST** apply it to **ALL** quantities in that table unless a specific row has a different value.
 
 4. **Statements**: Extract full text and BOUNDING BOX COORDINATES (into fieldCoordinates) for Intended Use, Storage, Handling, etc.
    - **Subcontractors**: Look for sections titled "Participating Laboratories", "Collaborating Laboratories", "Analyses Performed By" or "Subcontractors". Extract the list of laboratory names found under these headers into the 'subcontractors' field.
@@ -131,7 +135,8 @@ const QuantityCoordSchema = {
         value: BoxSchema,
         unit: BoxSchema,
         uncertainty: BoxSchema,
-        coverageFactor: BoxSchema
+        coverageFactor: BoxSchema,
+        coverageProbability: BoxSchema
     },
     nullable: true
 };
@@ -295,20 +300,6 @@ const RESPONSE_SCHEMA = {
     }
 } as const;
 
-// Helper to convert primitive value strings to DSI format for display
-const convertPrimitiveToDSI = (val: string) => {
-    if (!val) return null;
-    const regex = /^([\d.]+(?:[eE][+-]?\d+)?)\s*(\S.*)$/;
-    const match = val.trim().match(regex);
-    if (match) {
-        const dsi = convertToDSI(match[1], match[2]);
-        if (dsi.dsiUnit) {
-            return `${dsi.dsiValue} ${dsi.dsiUnit}`;
-        }
-    }
-    return null;
-};
-
 export const extractStructuredDataFromPdf = async (base64Pdf: string, apiKey: string): Promise<Partial<DRMD>> => {
     const ai = new GoogleGenAI({ apiKey: apiKey });
 
@@ -356,38 +347,10 @@ export const extractStructuredDataFromPdf = async (base64Pdf: string, apiKey: st
              });
         }
 
-        // Post-processing: Convert Material Quantities to DSI string format for UI display
-        // STRICT RULE: If the extracted string is a description (not value+unit), replace with "noQuantity"
-        if (parsedData.materials) {
-            parsedData.materials.forEach(mat => {
-                // Handle Minimum Sample Size
-                if (mat.minimumSampleSize) {
-                    const dsiFormat = convertPrimitiveToDSI(mat.minimumSampleSize);
-                    if (dsiFormat) {
-                        mat.minimumSampleSize = dsiFormat;
-                    } else {
-                        // Not a valid Value+Unit pair -> default to noQuantity
-                        mat.minimumSampleSize = "noQuantity";
-                    }
-                } else {
-                    mat.minimumSampleSize = "noQuantity";
-                }
-
-                // Handle Item Quantities
-                if (mat.itemQuantities) {
-                    const dsiFormat = convertPrimitiveToDSI(mat.itemQuantities);
-                    if (dsiFormat) {
-                        mat.itemQuantities = dsiFormat;
-                    } else {
-                        // Not a valid Value+Unit pair -> default to noQuantity
-                        mat.itemQuantities = "noQuantity";
-                    }
-                } else {
-                    mat.itemQuantities = "noQuantity";
-                }
-            });
-        }
-
+        // Removed destructive post-processing for Material Quantities (Item Quantities / Min Sample Size)
+        // We now preserve exactly what Gemini extracted so the user can see/edit the raw text.
+        // The DSI preview and conversion happens in the UI and XML Generation step respectively.
+        
         return parsedData;
 
     } catch (error) {

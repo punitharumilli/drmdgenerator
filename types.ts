@@ -190,9 +190,9 @@ export const INITIAL_QUANTITY: Quantity = {
     quantityKind: "",
     unit: "",
     uncertainty: "",
-    coverageFactor: "2.0",
-    coverageProbability: "0.95",
-    distribution: "normal",
+    coverageFactor: "",
+    coverageProbability: "",
+    distribution: "",
     identifiers: []
 };
 

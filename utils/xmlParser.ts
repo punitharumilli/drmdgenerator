@@ -1,3 +1,5 @@
+
+
 import { 
     DRMD, INITIAL_DRMD, INITIAL_PRODUCER, INITIAL_PERSON, INITIAL_QUANTITY, INITIAL_ID,
     Producer, ResponsiblePerson, Material, MaterialProperty, MeasurementResult, Quantity 
@@ -184,8 +186,13 @@ export const parseDrmdXml = (xmlString: string): DRMD => {
                         quant.unit = getNestedContent(real, ["si:unit"]);
                         quant.dsiUnit = quant.unit;
                         quant.dsiValue = quant.value;
-                        quant.uncertainty = getNestedContent(real, ["si:measurementUncertaintyUnivariate", "si:expandedMU", "si:valueExpandedMU"]);
-                        // k-factor and probability are not preserved in current XML export format, so they reset to defaults (2.0, 0.95)
+                        
+                        const expandedMU = real.getElementsByTagName("si:expandedMU")[0];
+                        if (expandedMU) {
+                             quant.uncertainty = getNestedContent(expandedMU, ["si:valueExpandedMU"]);
+                             quant.coverageFactor = getNestedContent(expandedMU, ["si:coverageFactor"]);
+                             quant.coverageProbability = getNestedContent(expandedMU, ["si:coverageProbability"]);
+                        }
                     }
                     return quant;
                 });

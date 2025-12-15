@@ -1,7 +1,7 @@
 
-
 import { DRMD } from "../types";
 import { convertToDSI } from "./unitConverter";
+import { getCasNumber } from "./casMapping";
 
 const escapeXml = (unsafe: string | undefined | number | boolean) => {
     if (unsafe === undefined || unsafe === null) return '';
@@ -43,7 +43,7 @@ const renderPrimitiveQuantity = (value: string) => {
     if (!value || value === "noQuantity") {
         return `
           <drmd:noQuantity>
-            <dcc:content lang="en">noQuantity</dcc:content>
+            <dcc:content>noQuantity</dcc:content>
           </drmd:noQuantity>`;
     }
     
@@ -72,7 +72,7 @@ const renderPrimitiveQuantity = (value: string) => {
     // Fallback to noQuantity for text, ranges, or unrecognized units
     return `
           <drmd:noQuantity>
-            <dcc:content lang="en">${escapeXml(value)}</dcc:content>
+            <dcc:content>${escapeXml(value)}</dcc:content>
           </drmd:noQuantity>`;
 };
 
@@ -96,11 +96,11 @@ ${renderValidity(data.administrativeData)}
         adminXml += `
     <drmd:referenceMaterialProducer>
       <drmd:name>
-        <dcc:content lang="en">${escapeXml(prod.name)}</dcc:content>
+        <dcc:content>${escapeXml(prod.name)}</dcc:content>
       </drmd:name>
       <drmd:contact>
         <dcc:name>
-          <dcc:content lang="en">${escapeXml(prod.name)}</dcc:content>
+          <dcc:content>${escapeXml(prod.name)}</dcc:content>
         </dcc:name>
         <dcc:eMail>${escapeXml(prod.email)}</dcc:eMail>
         <dcc:phone>${escapeXml(prod.phone)}</dcc:phone>
@@ -125,13 +125,13 @@ ${renderValidity(data.administrativeData)}
       <dcc:respPerson>
         <dcc:person>
           <dcc:name>
-            <dcc:content lang="en">${escapeXml(p.name)}</dcc:content>
+            <dcc:content>${escapeXml(p.name)}</dcc:content>
           </dcc:name>
         </dcc:person>`;
             if (p.description) {
                 adminXml += `
         <dcc:description>
-          <dcc:content lang="en">${escapeXml(p.description)}</dcc:content>
+          <dcc:content>${escapeXml(p.description)}</dcc:content>
         </dcc:description>`;
             }
             adminXml += `
@@ -153,10 +153,10 @@ ${renderValidity(data.administrativeData)}
         materialsXml += `
     <drmd:material>
       <drmd:name>
-        <dcc:content lang="en">${escapeXml(mat.name)}</dcc:content>
+        <dcc:content>${escapeXml(mat.name)}</dcc:content>
       </drmd:name>
       <drmd:description>
-        <dcc:content lang="en">${escapeXml(mat.description)}</dcc:content>
+        <dcc:content>${escapeXml(mat.description)}</dcc:content>
       </drmd:description>
       <drmd:minimumSampleSize>
         <dcc:itemQuantity>${renderPrimitiveQuantity(mat.minimumSampleSize)}
@@ -182,12 +182,12 @@ ${renderValidity(data.administrativeData)}
         propertiesXml += `
     <drmd:materialProperties isCertified="${prop.isCertified}">
       <drmd:name>
-        <dcc:content lang="en">${escapeXml(prop.name)}</dcc:content>
+        <dcc:content>${escapeXml(prop.name)}</dcc:content>
       </drmd:name>`;
         if (prop.description) {
             propertiesXml += `
       <drmd:description>
-        <dcc:content lang="en">${escapeXml(prop.description)}</dcc:content>
+        <dcc:content>${escapeXml(prop.description)}</dcc:content>
       </drmd:description>`;
         }
         if (prop.procedures) {
@@ -195,10 +195,10 @@ ${renderValidity(data.administrativeData)}
       <drmd:procedures>
         <dcc:usedMethod>
           <dcc:name>
-            <dcc:content lang="en">Procedure</dcc:content>
+            <dcc:content>Procedure</dcc:content>
           </dcc:name>
           <dcc:description>
-            <dcc:content lang="en">${escapeXml(prop.procedures)}</dcc:content>
+            <dcc:content>${escapeXml(prop.procedures)}</dcc:content>
           </dcc:description>
         </dcc:usedMethod>
       </drmd:procedures>`;
@@ -210,12 +210,12 @@ ${renderValidity(data.administrativeData)}
             propertiesXml += `
         <drmd:result>
           <drmd:name>
-            <dcc:content lang="en">${escapeXml(res.name || "Values")}</dcc:content>
+            <dcc:content>${escapeXml(res.name || "Values")}</dcc:content>
           </drmd:name>`;
             if (res.description) {
                 propertiesXml += `
           <drmd:description>
-            <dcc:content lang="en">${escapeXml(res.description)}</dcc:content>
+            <dcc:content>${escapeXml(res.description)}</dcc:content>
           </drmd:description>`;
             }
             propertiesXml += `
@@ -229,17 +229,50 @@ ${renderValidity(data.administrativeData)}
                 propertiesXml += `
               <drmd:quantity>
                 <dcc:name>
-                  <dcc:content lang="en">${escapeXml(q.name)}</dcc:content>
+                  <dcc:content>${escapeXml(q.name)}</dcc:content>
                 </dcc:name>
                 <si:real>
                   <si:value>${escapeXml(val)}</si:value>
-                  <si:unit>${escapeXml(unit)}</si:unit>
+                  <si:unit>${escapeXml(unit)}</si:unit>`;
+                
+                // Uncertainty Block
+                if (q.uncertainty) {
+                    propertiesXml += `
                   <si:measurementUncertaintyUnivariate>
                     <si:expandedMU>
-                      <si:valueExpandedMU>${escapeXml(q.uncertainty)}</si:valueExpandedMU>
+                      <si:valueExpandedMU>${escapeXml(q.uncertainty)}</si:valueExpandedMU>`;
+                    
+                    if (q.coverageFactor) {
+                        propertiesXml += `
+                      <si:coverageFactor>${escapeXml(q.coverageFactor)}</si:coverageFactor>`;
+                    }
+                    if (q.coverageProbability) {
+                        propertiesXml += `
+                      <si:coverageProbability>${escapeXml(q.coverageProbability)}</si:coverageProbability>`;
+                    }
+                    
+                    propertiesXml += `
                     </si:expandedMU>
-                  </si:measurementUncertaintyUnivariate>
-                </si:real>
+                  </si:measurementUncertaintyUnivariate>`;
+                }
+
+                propertiesXml += `
+                </si:real>`;
+
+                // Automatically generate CAS Identifier if available
+                const casNumber = getCasNumber(q.name);
+                if (casNumber) {
+                    propertiesXml += `
+                <drmd:propertyIdentifiers>
+                    <drmd:propertyIdentifier>
+                        <drmd:scheme>CAS</drmd:scheme>
+                        <drmd:value>${escapeXml(casNumber)}</drmd:value>
+                        <drmd:link>https://commonchemistry.cas.org/detail?cas_rn=${escapeXml(casNumber)}</drmd:link>
+                    </drmd:propertyIdentifier>
+                </drmd:propertyIdentifiers>`;
+                }
+
+                propertiesXml += `
               </drmd:quantity>`;
             });
             propertiesXml += `
@@ -264,9 +297,9 @@ ${renderValidity(data.administrativeData)}
         return `
     <drmd:${tag}>
       <dcc:name>
-        <dcc:content lang="en">${escapeXml(name)}</dcc:content>
+        <dcc:content>${escapeXml(name)}</dcc:content>
       </dcc:name>
-      <dcc:content lang="en">${escapeXml(content)}</dcc:content>
+      <dcc:content>${escapeXml(content)}</dcc:content>
     </drmd:${tag}>`;
     };
 
