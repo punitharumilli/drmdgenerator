@@ -44,6 +44,9 @@ Key Extraction Rules:
 
 2. **Materials**: Extract name, description, and minimum sample size.
    - **IMPORTANT**: The "Material Name" is often the prominent title of the document (e.g., "Li-NMC 111..."). Ensure you extract specific **fieldCoordinates** for the 'name' field, distinct from the generic section block.
+   - **Material Identifier**: Look for the main reference material code at the top of the document (e.g., "BAM-M386a", "ERM-DA470k", "NIST SRM 1234").
+     - Split it into **Scheme** (e.g., "BAM", "ERM", "NIST") and **Value** (e.g., "M386a", "DA470k", "SRM 1234"). 
+     - If the code is just a number or code without a clear provider prefix, use "MaterialID" as the scheme.
    - **Coordinates**: Attempt to extract distinct **fieldCoordinates** for 'description' and 'minimumSampleSize' if they are visually distinct blocks.
 
 3. **Properties (CRITICAL - TABLE STRUCTURE)**: 
@@ -232,6 +235,17 @@ const RESPONSE_SCHEMA = {
                     materialClass: { type: Type.STRING },
                     itemQuantities: { type: Type.STRING },
                     isCertified: { type: Type.BOOLEAN },
+                    materialIdentifiers: {
+                        type: Type.ARRAY,
+                        items: {
+                            type: Type.OBJECT,
+                            properties: {
+                                scheme: { type: Type.STRING },
+                                value: { type: Type.STRING },
+                                link: { type: Type.STRING }
+                            }
+                        }
+                    },
                     fieldCoordinates: MaterialCoordSchema,
                     sectionCoordinates: BoxSchema
                 }

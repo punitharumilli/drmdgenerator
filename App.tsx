@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
     DRMD, INITIAL_DRMD, INITIAL_PRODUCER, INITIAL_PERSON, INITIAL_ID, INITIAL_QUANTITY, ALLOWED_TITLES
@@ -15,6 +14,188 @@ const generateUUID = () => {
         return crypto.randomUUID();
     }
     return Math.random().toString(36).substring(2) + Date.now().toString(36);
+};
+
+// Helper for HTML Report Generation
+const generateHtmlReport = (data: DRMD) => {
+    const styles = `
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #1f2937; margin: 0; padding: 40px; line-height: 1.5; }
+        h1 { font-size: 28px; font-weight: 700; border-bottom: 2px solid #e5e7eb; padding-bottom: 20px; margin-bottom: 30px; color: #111827; }
+        h2 { font-size: 20px; font-weight: 600; margin-top: 40px; margin-bottom: 20px; color: #374151; background-color: #f3f4f6; padding: 10px 15px; border-radius: 8px; }
+        h3 { font-size: 16px; font-weight: 600; margin-top: 25px; margin-bottom: 15px; color: #4b5563; border-bottom: 1px solid #e5e7eb; padding-bottom: 5px; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 14px; }
+        th { text-align: left; padding: 10px; color: #6b7280; font-weight: 600; width: 20%; vertical-align: top; border-bottom: 1px solid #e5e7eb; background: #f9fafb; }
+        td { padding: 10px; color: #111827; vertical-align: top; border-bottom: 1px solid #e5e7eb; }
+        .footer { margin-top: 60px; font-size: 12px; color: #9ca3af; text-align: center; border-top: 1px solid #e5e7eb; padding-top: 20px; }
+        .tag { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+        .tag-green { background: #dcfce7; color: #166534; }
+        .tag-yellow { background: #fef9c3; color: #854d0e; }
+        /* Cleaner scrollbars */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
+    `;
+
+    // Conditional Row Renderer
+    const renderRow = (label: string, value: any) => {
+        if (value === undefined || value === null || value === "") return '';
+        return `<tr><th>${label}</th><td>${value}</td></tr>`;
+    };
+
+    // Admin Data Rows
+    let adminRows = '';
+    adminRows += renderRow('Title', data.administrativeData.title);
+    adminRows += renderRow('Unique Identifier', data.administrativeData.uniqueIdentifier);
+    adminRows += renderRow('Validity Type', data.administrativeData.validityType);
+    if (data.administrativeData.validityType === 'Specific Time') {
+        adminRows += renderRow('Valid Until', data.administrativeData.specificTime);
+    } else if (data.administrativeData.validityType === 'Time After Dispatch') {
+         adminRows += renderRow('Duration', `${data.administrativeData.durationY} Years ${data.administrativeData.durationM} Months`);
+         adminRows += renderRow('Dispatch Date', data.administrativeData.dateOfIssue);
+    }
+
+    // Producer Rows
+    const producerRows = data.administrativeData.producers.map((p, i) => {
+        let rows = `<tr><th colspan="2" style="background: #e0e7ff; color: #3730a3; padding-top: 15px;">Producer ${i+1}</th></tr>`;
+        rows += renderRow('Name', p.name);
+        rows += renderRow('Email', p.email);
+        rows += renderRow('Phone', p.phone);
+        rows += renderRow('Fax', p.fax);
+        const address = `${p.address.street} ${p.address.streetNo}, ${p.address.postCode} ${p.address.city}, ${p.address.countryCode}`.trim();
+        rows += renderRow('Address', address.replace(/ ,/g, ''));
+        return rows;
+    }).join('');
+
+    // Responsible Persons Rows
+    const personRows = data.administrativeData.responsiblePersons.map((p, i) => {
+        let rows = `<tr><th colspan="2" style="background: #e0e7ff; color: #3730a3; padding-top: 15px;">Responsible Person ${i+1}</th></tr>`;
+        rows += renderRow('Name', `${p.name} ${p.mainSigner ? '<span class="tag tag-green">Main Signer</span>' : ''}`);
+        rows += renderRow('Role', p.role);
+        rows += renderRow('Description', p.description);
+        return rows;
+    }).join('');
+
+    // Material Sections
+    const materialHtml = data.materials.map((m, i) => `
+        <h3>Material ${i+1}: ${m.name}</h3>
+        <table>
+            ${renderRow('Description', m.description)}
+            ${renderRow('Material Class', m.materialClass)}
+            ${renderRow('Min Sample Size', m.minimumSampleSize)}
+            ${renderRow('Item Quantities', m.itemQuantities)}
+            ${renderRow('Identifiers', m.materialIdentifiers.map(id => id.value).filter(Boolean).join(', '))}
+        </table>
+    `).join('');
+
+    // Property Sections
+    const propertiesHtml = data.properties.map(p => `
+        <div style="margin-bottom: 30px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 12px;">
+                <span style="font-weight: 600; font-size: 16px; color: #374151;">${p.name}</span>
+                <span class="tag ${p.isCertified ? 'tag-green' : 'tag-yellow'}">${p.isCertified ? 'Certified' : 'Not Certified'}</span>
+            </div>
+            ${p.description ? `<p style="font-size: 13px; color: #6b7280; margin-bottom: 15px; font-style: italic;">${p.description}</p>` : ''}
+            ${p.procedures ? `<p style="font-size: 13px; color: #6b7280; margin-bottom: 15px;"><strong>Procedures:</strong> ${p.procedures}</p>` : ''}
+            
+            ${p.results.map(r => `
+                <div style="margin-left: 0px; margin-bottom: 20px;">
+                    <div style="font-weight: 600; font-size: 14px; margin-bottom: 8px; color: #4b5563;">${r.name}</div>
+                    ${r.description ? `<div style="font-size: 12px; color: #6b7280; margin-bottom: 8px; font-style: italic;">${r.description}</div>` : ''}
+                    <div style="overflow-x: auto;">
+                        <table style="min-width: 900px;">
+                            <tr style="background: #f9fafb;">
+                                <th style="width: 20%; padding: 8px;">Name</th>
+                                <th style="width: 15%; padding: 8px;">Value</th>
+                                <th style="width: 10%; padding: 8px;">Unit</th>
+                                <th style="width: 10%; padding: 8px;">DSI Unit</th>
+                                <th style="width: 10%; padding: 8px;">Uncertainty</th>
+                                <th style="width: 8%; padding: 8px;">k</th>
+                                <th style="width: 8%; padding: 8px;">Prob.</th>
+                                <th style="width: 15%; padding: 8px;">Identifier (CAS)</th>
+                            </tr>
+                            ${r.quantities.map(q => {
+                                const cas = getCasNumber(q.name);
+                                return `
+                                <tr>
+                                    <td style="padding: 8px;">${q.name}</td>
+                                    <td style="padding: 8px;">${q.value}</td>
+                                    <td style="padding: 8px;">${q.unit}</td>
+                                    <td style="padding: 8px; font-family: monospace; color: #059669;">${q.dsiUnit || ''}</td>
+                                    <td style="padding: 8px;">${q.uncertainty || ''}</td>
+                                    <td style="padding: 8px;">${q.coverageFactor || ''}</td>
+                                    <td style="padding: 8px;">${q.coverageProbability || ''}</td>
+                                    <td style="padding: 8px;">${cas || ''}</td>
+                                </tr>
+                                `;
+                            }).join('')}
+                        </table>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `).join('');
+
+    // Statements Table
+    const stmt = data.statements.official;
+    let stmtRows = '';
+    stmtRows += renderRow('Intended Use', stmt.intendedUse);
+    stmtRows += renderRow('Storage Information', stmt.storageInformation);
+    stmtRows += renderRow('Handling Instructions', stmt.handlingInstructions);
+    stmtRows += renderRow('Metrological Traceability', stmt.metrologicalTraceability);
+    stmtRows += renderRow('Health & Safety', stmt.healthAndSafety);
+    stmtRows += renderRow('Subcontractors', stmt.subcontractors);
+    stmtRows += renderRow('Legal Notice', stmt.legalNotice);
+    stmtRows += renderRow('Ref to Certification Report', stmt.referenceToCertificationReport);
+
+    const customStmtRows = data.statements.custom.map(s => renderRow(s.name, s.content)).join('');
+
+    // Comment Section
+    const commentHtml = data.generalComment ? `
+        <h2>Comment and Document</h2>
+        <table>
+            ${renderRow('General Comment', data.generalComment)}
+            ${renderRow('Attached Document', data.binaryDocument ? data.binaryDocument.fileName : 'None')}
+        </table>
+    ` : '';
+
+    return `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>${data.administrativeData.title}</title>
+        <style>${styles}</style>
+    </head>
+    <body>
+        <h1>${data.administrativeData.title}</h1>
+        
+        <h2>Administrative Data</h2>
+        <table>
+            ${adminRows}
+            ${producerRows}
+            ${personRows}
+        </table>
+
+        <h2>Materials</h2>
+        ${materialHtml || '<p style="color:#6b7280; font-style:italic;">No materials defined.</p>'}
+
+        <h2>Properties</h2>
+        ${propertiesHtml || '<p style="color:#6b7280; font-style:italic;">No properties defined.</p>'}
+
+        <h2>Statements</h2>
+        <table>
+            ${stmtRows}
+            ${customStmtRows}
+        </table>
+
+        ${commentHtml}
+
+        <div class="footer">
+            Generated by DRMD Generator • ${new Date().toLocaleDateString()}
+        </div>
+    </body>
+    </html>
+    `;
 };
 
 // --- Custom PDF Viewer Component ---
@@ -127,20 +308,13 @@ const PdfPage: React.FC<{
 
         // Apply dynamic padding to height to fix "small box" issues
         const rawHeight = rawYmax - rawYmin;
-        
-        // User requested: "starts perfectly but the height of the box should be sightly more"
-        // We increase the padding factor and shift the distribution.
         const paddingFactor = rawHeight < 50 ? 0.5 : 0.2; 
         const padding = rawHeight * paddingFactor;
         
-        // Apply assymetric padding: 
-        // 10% to Top (maintain "starts perfectly" with slight buffer)
-        // 90% to Bottom (increase height below)
+        // Apply assymetric padding
         const ymin = Math.max(0, rawYmin - (padding * 0.1));
         const ymax = Math.min(1000, rawYmax + (padding * 0.9));
 
-        // Map 0-1000 normalized coordinates to PERCENTAGES of container
-        // This handles CSS scaling (e.g. w-full) automatically
         return {
             top: `${ymin / 10}%`,
             left: `${xmin / 10}%`,
@@ -311,18 +485,19 @@ const App: React.FC = () => {
                   const newMats = (extractedData?.materials || []).map((m: any) => ({
                       ...m, 
                       uuid: generateUUID(), 
-                      materialIdentifiers: [{...INITIAL_ID}], 
+                      materialIdentifiers: (m.materialIdentifiers && m.materialIdentifiers.length > 0) 
+                          ? m.materialIdentifiers 
+                          : [{...INITIAL_ID}], 
                       name: m.name || "",
                       description: m.description || "",
                       materialClass: m.materialClass || "", 
-                      itemQuantities: m.itemQuantities || "", // Removed default "1" to allow empty/noQuantity
+                      itemQuantities: m.itemQuantities || "", 
                       minimumSampleSize: m.minimumSampleSize || "",
                       isCertified: !!m.isCertified,
                       fieldCoordinates: m.fieldCoordinates,
                       sectionCoordinates: m.sectionCoordinates
                   }));
                   
-                  // Property and Result Merging Logic
                   const normalizeName = (s: string) => s ? s.toLowerCase().replace(/[^a-z0-9]/g, "") : "";
                   const propertyMap: Record<string, any> = {};
 
@@ -334,18 +509,16 @@ const App: React.FC = () => {
                           propertyMap[propKey] = { ...p, results: [] };
                       }
                       
-                      // Move Description to Result if it looks like footnotes (starts with 1), * etc)
                       const propDesc = (p.description || "").trim();
                       const isFootnote = propDesc.match(/^(\d+\)|1\)|\*)/);
                       let resultDescPrefix = "";
                       
                       if (isFootnote) {
                           resultDescPrefix = propDesc;
-                          propertyMap[propKey].description = ""; // clear from property
+                          propertyMap[propKey].description = ""; 
                       }
 
                       if (p.results) {
-                          // Inject the moved description into the first result if available
                           if (resultDescPrefix && p.results.length > 0) {
                               p.results[0].description = (p.results[0].description ? p.results[0].description + "\n" : "") + resultDescPrefix;
                           }
@@ -353,7 +526,6 @@ const App: React.FC = () => {
                           p.results.forEach((r: any) => {
                               const rName = (r.name || "").toLowerCase().trim();
                               
-                              // Refined fragment check: Only merge if it looks like a unit header
                               const isFragment = 
                                   rName.includes("in mg/kg") || 
                                   rName.includes("in %") || 
@@ -362,7 +534,6 @@ const App: React.FC = () => {
                                   rName === "";
 
                               if (propertyMap[propKey].results.length > 0 && isFragment) {
-                                  // Merge into the first result
                                   if (r.quantities) {
                                       if (!propertyMap[propKey].results[0].quantities) {
                                           propertyMap[propKey].results[0].quantities = [];
@@ -373,7 +544,6 @@ const App: React.FC = () => {
                                       propertyMap[propKey].results[0].description = (propertyMap[propKey].results[0].description || "") + "\n" + r.description;
                                   }
                               } else {
-                                  // Add as new separate table
                                   propertyMap[propKey].results.push(r);
                               }
                           });
@@ -382,24 +552,17 @@ const App: React.FC = () => {
 
                   const newProps = Object.values(propertyMap).map((p: any) => {
                       const finalResults = (p.results || []).map((r: any) => {
-                          // FALLBACK EXTRACTION LOGIC:
-                          // If k factor or probability are not explicitly on the row items, 
-                          // check the table description/footer or parent property description for them.
                           const desc = (r.description || "").toLowerCase();
                           const parentDesc = (p.description || "").toLowerCase();
                           
-                          // Helper to extract K (k=2, k = 2.0)
                           const getK = (s: string) => {
                               const m = s.match(/k\s*=\s*(\d+(\.\d+)?)/i);
                               return m ? m[1] : "";
                           };
                           
-                          // Helper to extract Prob (95% confidence, confidence level 95%)
                           const getProb = (s: string) => {
-                               // Match "95% confidence"
                                const m1 = s.match(/(\d+(?:\.\d+)?)\s*%\s*confidence/i);
                                if (m1) return m1[1];
-                               // Match "confidence...95%"
                                const m2 = s.match(/confidence.*?(\d+(?:\.\d+)?)\s*%/i);
                                if (m2) return m2[1];
                                return "";
@@ -408,14 +571,12 @@ const App: React.FC = () => {
                           let defaultK = getK(desc) || getK(parentDesc);
                           let defaultProb = getProb(desc) || getProb(parentDesc);
 
-                          // Fallback: if K is found but Prob is not, look for loose "95%" anywhere
                           if (defaultK && !defaultProb) {
                                const combined = desc + " " + parentDesc;
                                const m3 = combined.match(/(\d+(?:\.\d+)?)\s*%/);
                                if (m3) defaultProb = m3[1];
                           }
 
-                          // Normalize prob: convert "95" to "0.95"
                           if (defaultProb) {
                                const val = parseFloat(defaultProb);
                                if (val > 1) defaultProb = (val / 100).toString();
@@ -430,11 +591,9 @@ const App: React.FC = () => {
                                   finalUncertainty = "";
                               }
 
-                              // Determine final k and p
                               let finalK = q.coverageFactor || "";
                               let finalProb = q.coverageProbability || "";
                               
-                              // Apply fallback if missing and uncertainty exists
                               if (!finalK && q.uncertainty && defaultK) {
                                   finalK = defaultK;
                               }
@@ -465,7 +624,6 @@ const App: React.FC = () => {
                               };
                           });
                           
-                          // Ensure valid name
                           const finalName = r.name && r.name.length > 1 ? r.name : "Values";
 
                           return { 
@@ -474,7 +632,7 @@ const App: React.FC = () => {
                               description: r.description || "",
                               uuid: generateUUID(), 
                               quantities: qs,
-                              sectionCoordinates: r.sectionCoordinates // Ensure section coords are preserved for tables
+                              sectionCoordinates: r.sectionCoordinates
                           };
                       });
                       return { 
@@ -488,12 +646,10 @@ const App: React.FC = () => {
                         };
                   });
 
-                  // Strict Mapping for Producers
                   const newProds = (extractedData?.administrativeData?.producers || []).map((p: any) => {
                       let countryCode = p.address?.countryCode || "";
                       const city = p.address?.city || "";
                       
-                      // Auto-fix for Berlin -> DE (redundant check but keeps consistency)
                       if (city.toLowerCase().includes("berlin") || city.toLowerCase().includes("adlershof")) {
                           countryCode = "DE";
                       }
@@ -518,20 +674,17 @@ const App: React.FC = () => {
                       };
                   });
 
-                  // Strict Mapping for Responsible Persons
-                  // All new persons default to mainSigner: false (from updated INITIAL_PERSON)
                   const newPersons = (extractedData?.administrativeData?.responsiblePersons || []).map((p: any, index: number) => ({
                       ...INITIAL_PERSON, 
                       uuid: generateUUID(), 
                       name: p.name || "", 
                       role: p.role || "", 
                       description: p.description || "",
-                      mainSigner: index === 0, // Only the first extracted person is the main signer
+                      mainSigner: index === 0, 
                       fieldCoordinates: p.fieldCoordinates,
                       sectionCoordinates: p.sectionCoordinates
                   }));
 
-                  // Safely determine validity type
                   let validType = prev.administrativeData.validityType;
                   if (extractedData?.administrativeData?.validityType) {
                       const vt = extractedData.administrativeData.validityType;
@@ -540,13 +693,11 @@ const App: React.FC = () => {
                       }
                   }
 
-                  // Strict Safe Mapping for Administrative Data
                   return {
                       ...prev,
                       administrativeData: { 
                           ...prev.administrativeData, 
                           uniqueIdentifier: extractedData?.administrativeData?.uniqueIdentifier || prev.administrativeData.uniqueIdentifier || generateUUID(),
-                          // Force valid enum value for title, preventing free-text pollution in XML
                           title: ALLOWED_TITLES.includes(extractedData?.administrativeData?.title as string) 
                             ? (extractedData?.administrativeData?.title as string)
                             : "referenceMaterialCertificate",
@@ -605,17 +756,15 @@ const App: React.FC = () => {
                   const xmlContent = e.target?.result as string;
                   const parsedData = parseDrmdXml(xmlContent);
                   
-                  // Check for binary document and load it if present
                   if (parsedData.binaryDocument && parsedData.binaryDocument.data) {
                       try {
-                          // Convert base64 to blob
                           const byteCharacters = atob(parsedData.binaryDocument.data);
                           const byteNumbers = new Array(byteCharacters.length);
                           for (let i = 0; i < byteCharacters.length; i++) {
                               byteNumbers[i] = byteCharacters.charCodeAt(i);
                           }
                           const byteArray = new Uint8Array(byteNumbers);
-                          const blob = new Blob([byteArray], {type: 'application/pdf'}); // Assume PDF for viewer
+                          const blob = new Blob([byteArray], {type: 'application/pdf'}); 
                           const pdfUrl = URL.createObjectURL(blob);
                           setPdfUrl(pdfUrl);
                       } catch (err) {
@@ -637,9 +786,25 @@ const App: React.FC = () => {
               }
           };
           reader.readAsText(file);
-          // Reset input value so same file can be selected again
           event.target.value = "";
       }
+  };
+
+  const getExportFilename = () => {
+    let filename = `DRMD-${drmdData.administrativeData.uniqueIdentifier || 'export'}`;
+
+    if (drmdData.materials.length > 0) {
+        const firstMat = drmdData.materials[0];
+        const id = firstMat.materialIdentifiers.find(i => i.scheme && i.value);
+        if (id) {
+            const cleanScheme = id.scheme.trim().replace(/[^a-zA-Z0-9-_]/g, '');
+            const cleanValue = id.value.trim().replace(/[^a-zA-Z0-9-_]/g, '');
+            if (cleanScheme && cleanValue) {
+                filename = `${cleanScheme}-${cleanValue}`;
+            }
+        }
+    }
+    return filename;
   };
 
   const handleExport = () => {
@@ -648,7 +813,8 @@ const App: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `DRMD-${drmdData.administrativeData.uniqueIdentifier || 'export'}.xml`;
+    
+    link.download = `${getExportFilename()}.xml`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -661,6 +827,9 @@ const App: React.FC = () => {
       return `P${y?y+'Y':''}${m?m+'M':''}`;
   };
 
+  // ... (renderSettings, renderAdmin, renderMaterials, renderProperties, renderStatements, renderCommentAndDocument unchanged but kept for context if needed, but for App component replacement I assume I just need renderValidateExport updated)
+  
+  // Re-declare render methods to ensure they are available in the scope
   const renderSettings = () => (
       <div className="space-y-6 animate-fadeIn">
           <SectionHeader title="Application Settings" icon="⚙️" />
@@ -694,7 +863,6 @@ const App: React.FC = () => {
                 </div>
             </div>
             
-            {/* Validity Section */}
             <div className="border-t pt-4 mt-2">
                 <h4 className="font-bold text-sm text-gray-700 mb-2">Period of Validity</h4>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
@@ -740,7 +908,6 @@ const App: React.FC = () => {
                         }
                      }} className="absolute top-4 right-4 text-red-400 hover:text-red-600 disabled:opacity-50" disabled={drmdData.administrativeData.producers.length <= 1}>🗑️</button>
                      
-                     {/* Pass sectionCoordinates to trigger section highlight on any interaction */}
                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-3">
                             <Input label="Name *" value={prod.name} onFocus={() => handleHighlight(prod.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].name = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} onInfoClick={() => handleHighlight(prod.sectionCoordinates)} />
@@ -778,7 +945,6 @@ const App: React.FC = () => {
                         }
                      }} className="absolute top-4 right-4 text-red-400 hover:text-red-600 disabled:opacity-50" disabled={drmdData.administrativeData.responsiblePersons.length <= 1}>🗑️</button>
 
-                     {/* Pass sectionCoordinates to trigger section highlight */}
                      <div className="grid grid-cols-3 gap-4">
                          <div>
                             <Input label="Name *" value={rp.name} onFocus={() => handleHighlight(rp.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.administrativeData.responsiblePersons]; list[idx].name = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, responsiblePersons: list}})); }} onInfoClick={() => handleHighlight(rp.sectionCoordinates)} />
@@ -819,13 +985,45 @@ const App: React.FC = () => {
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-3">
-                        {/* Use fieldCoordinates for Name (specific field) or fallback to text search */}
                         <Input label="Name *" value={mat.name} onFocus={() => handleHighlight(mat.fieldCoordinates?.['name'] || mat.name)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].name = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.fieldCoordinates?.['name'] || mat.name)} />
                         
-                        {/* Keep sectionCoordinates for other fields as requested by user ("rest all are working perfectly") */}
+                        {mat.materialIdentifiers.map((mid, midIdx) => {
+                             const hasScheme = mid.scheme && mid.scheme !== "MaterialID" && mid.scheme.trim() !== "";
+                             const compositeValue = hasScheme ? `${mid.scheme}-${mid.value}` : mid.value;
+                             
+                             return (
+                                 <Input 
+                                     key={midIdx}
+                                     label="RM Code (e.g. BAM-M386a)" 
+                                     value={compositeValue}
+                                     onFocus={() => handleHighlight(mat.sectionCoordinates)}
+                                     onChange={(val) => {
+                                         const list = [...drmdData.materials];
+                                         let scheme = "";
+                                         let value = val;
+                                         
+                                         const hyphenIdx = val.indexOf('-');
+                                         const spaceIdx = val.indexOf(' ');
+                                         
+                                         if (hyphenIdx !== -1) {
+                                             scheme = val.substring(0, hyphenIdx).trim();
+                                             value = val.substring(hyphenIdx + 1).trim();
+                                         } else if (spaceIdx !== -1) {
+                                             scheme = val.substring(0, spaceIdx).trim();
+                                             value = val.substring(spaceIdx + 1).trim();
+                                         }
+                                         
+                                         list[idx].materialIdentifiers[midIdx].scheme = scheme;
+                                         list[idx].materialIdentifiers[midIdx].value = value;
+                                         setDrmdData(p => ({...p, materials: list}));
+                                     }}
+                                     onInfoClick={() => handleHighlight(mat.sectionCoordinates)}
+                                 />
+                             );
+                        })}
+
                         <Input label="Material Class" value={mat.materialClass} onFocus={() => handleHighlight(mat.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].materialClass = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.sectionCoordinates)} />
                         
-                        {/* Item Quantities with DSI Preview */}
                         <div className="space-y-1">
                             <Input label="Item Quantities" value={mat.itemQuantities} onFocus={() => handleHighlight(mat.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].itemQuantities = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.sectionCoordinates)} />
                             <div className="w-full border border-gray-200 bg-gray-50 rounded-md p-2 text-xs font-mono text-gray-600 truncate">
@@ -834,10 +1032,8 @@ const App: React.FC = () => {
                         </div>
                     </div>
                     <div className="space-y-3">
-                         {/* Modified to prefer specific field coordinates if available */}
                          <TextArea label="Description" value={mat.description} onFocus={() => handleHighlight(mat.fieldCoordinates?.['description'] || mat.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].description = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.fieldCoordinates?.['description'] || mat.sectionCoordinates)} />
                          <div className="grid grid-cols-2 gap-4 items-end">
-                             {/* CHANGED: Use 'intendedUse' coordinates for Min Sample Size as it typically resides in the Recommended Use paragraph */}
                              <div className="space-y-1">
                                 <Input label="Min Sample Size (e.g. 4.9 g) *" value={mat.minimumSampleSize} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['intendedUse'] || mat.fieldCoordinates?.['minimumSampleSize'] || mat.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].minimumSampleSize = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['intendedUse'] || mat.fieldCoordinates?.['minimumSampleSize'] || mat.sectionCoordinates)} />
                                 <div className="w-full border border-gray-200 bg-gray-50 rounded-md p-2 text-xs font-mono text-gray-600 truncate">
@@ -899,7 +1095,6 @@ const App: React.FC = () => {
                                 <div key={res.uuid} className="bg-gray-50 p-4 rounded border border-gray-200 shadow-sm">
                                     <div className="flex gap-4 mb-4 items-start">
                                         <div className="flex-1">
-                                            {/* Pass Table sectionCoordinates */}
                                             <Input label="Table Name" value={res.name} onFocus={() => handleHighlight(res.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].name = v; setDrmdData(p => ({...p, properties: list})); }} onInfoClick={() => handleHighlight(res.sectionCoordinates)} />
                                         </div>
                                         <div className="flex-[2]">
@@ -926,22 +1121,19 @@ const App: React.FC = () => {
                                             <tbody className="divide-y divide-gray-200">
                                                 {res.quantities.map((q, qIdx) => (
                                                     <tr key={q.uuid} className="hover:bg-gray-50 group">
-                                                        {/* Name */}
                                                         <td className="p-1 relative">
                                                             <input 
                                                                 className="w-full border-b border-transparent group-hover:border-gray-300 outline-none bg-transparent pr-4" 
                                                                 value={q.name} 
-                                                                onFocus={() => handleHighlight(res.sectionCoordinates)} // Focus entire table when editing cell
+                                                                onFocus={() => handleHighlight(res.sectionCoordinates)}
                                                                 onChange={(e) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].name = e.target.value; setDrmdData(p => ({...p, properties: list})); }} 
                                                             />
                                                         </td>
-                                                        {/* CAS Number (Auto) */}
                                                         <td className="p-1">
                                                             <div className="w-full border-b border-transparent bg-gray-50 text-gray-600 text-xs px-1 py-2 overflow-x-auto whitespace-nowrap font-mono">
                                                                 {getCasNumber(q.name) || "-"}
                                                             </div>
                                                         </td>
-                                                        {/* Value */}
                                                         <td className="p-1 relative group-td">
                                                             <input 
                                                                 className="w-full border-b border-transparent group-hover:border-gray-300 outline-none bg-transparent pr-4" 
@@ -957,7 +1149,6 @@ const App: React.FC = () => {
                                                                 }} 
                                                             />
                                                         </td>
-                                                        {/* Uncertainty */}
                                                         <td className="p-1 relative">
                                                             <input 
                                                                 className="w-full border-b border-transparent group-hover:border-gray-300 outline-none bg-transparent pr-4" 
@@ -966,7 +1157,6 @@ const App: React.FC = () => {
                                                                 onChange={(e) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].uncertainty = e.target.value; setDrmdData(p => ({...p, properties: list})); }} 
                                                             />
                                                         </td>
-                                                        {/* Unit */}
                                                         <td className="p-1 relative">
                                                             <input 
                                                                 className="w-full border-b border-transparent group-hover:border-gray-300 outline-none bg-transparent pr-4" 
@@ -982,17 +1172,13 @@ const App: React.FC = () => {
                                                                 }} 
                                                             />
                                                         </td>
-                                                        {/* DSI Unit (Display Only) */}
                                                         <td className="p-1">
                                                             <div className="w-full border-b border-transparent bg-gray-50 text-gray-600 text-xs px-1 py-2 overflow-x-auto whitespace-nowrap font-mono">
                                                                 {q.dsiUnit}
                                                             </div>
                                                         </td>
-                                                        {/* k factor */}
                                                         <td className="p-1"><input className="w-full border-b border-transparent group-hover:border-gray-300 outline-none bg-transparent" value={q.coverageFactor} onChange={(e) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].coverageFactor = e.target.value; setDrmdData(p => ({...p, properties: list})); }} /></td>
-                                                        {/* Probability */}
                                                         <td className="p-1"><input className="w-full border-b border-transparent group-hover:border-gray-300 outline-none bg-transparent" value={q.coverageProbability} onChange={(e) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].coverageProbability = e.target.value; setDrmdData(p => ({...p, properties: list})); }} /></td>
-                                                        {/* Delete */}
                                                         <td className="p-1 text-center"><button onClick={() => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities.splice(qIdx, 1); setDrmdData(p => ({...p, properties: list})); }} className="text-red-400 hover:text-red-600">×</button></td>
                                                     </tr>
                                                 ))}
@@ -1065,15 +1251,12 @@ const App: React.FC = () => {
         if (e.target.files && e.target.files[0]) {
             const file = e.target.files[0];
             
-            // Validation: Size (200MB)
             if (file.size > 200 * 1024 * 1024) {
                 alert("File size exceeds 200MB limit.");
                 return;
             }
 
-            // Validation: Type (Simple check on extension/mime)
             const allowedTypes = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain'];
-            // Also check extensions for robustness
             const allowedExts = ['pdf', 'doc', 'docx', 'txt'];
             const ext = file.name.split('.').pop()?.toLowerCase();
 
@@ -1085,7 +1268,6 @@ const App: React.FC = () => {
             const reader = new FileReader();
             reader.onloadend = () => {
                 const base64String = reader.result as string;
-                // Remove data URL prefix (e.g. "data:application/pdf;base64,")
                 const base64Data = base64String.split(',')[1];
                 
                 setDrmdData(p => ({
@@ -1162,11 +1344,9 @@ const App: React.FC = () => {
         const errors: { section: string; message: string }[] = [];
         const warnings: { section: string; message: string }[] = [];
 
-        // Admin Data
         if (!drmdData.administrativeData.title) errors.push({ section: "Administrative", message: "Document Title is missing." });
         if (!drmdData.administrativeData.uniqueIdentifier) errors.push({ section: "Administrative", message: "Unique Identifier is missing." });
         
-        // Producers
         if (drmdData.administrativeData.producers.length === 0) {
             errors.push({ section: "Administrative", message: "At least one Producer is required." });
         } else if (drmdData.administrativeData.producers.length > 1) {
@@ -1177,12 +1357,10 @@ const App: React.FC = () => {
             });
         }
 
-        // Responsible Persons
         if (drmdData.administrativeData.responsiblePersons.length === 0) {
             warnings.push({ section: "Administrative", message: "No Responsible Persons defined (Warning)." });
         }
 
-        // Materials
         if (drmdData.materials.length === 0) {
             errors.push({ section: "Materials", message: "At least one Material must be defined." });
         } else {
@@ -1192,7 +1370,6 @@ const App: React.FC = () => {
             });
         }
 
-        // Statements - Strict XSD Checks (minOccurs=1)
         if (!drmdData.statements.official.intendedUse) errors.push({ section: "Statements", message: "Intended Use is required." });
         if (!drmdData.statements.official.storageInformation) errors.push({ section: "Statements", message: "Storage Information is required." });
         if (!drmdData.statements.official.handlingInstructions) errors.push({ section: "Statements", message: "Instructions for Handling and Use are required." });
@@ -1202,13 +1379,26 @@ const App: React.FC = () => {
 
     const { errors, warnings } = getValidationReport();
     const xmlPreview = generateDrmdXml(drmdData);
+    const htmlPreview = generateHtmlReport(drmdData);
     const isValid = errors.length === 0;
 
+    const handleHtmlExport = () => {
+        const blob = new Blob([htmlPreview], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${getExportFilename()}.html`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
+
     return (
-        <div className="space-y-6 animate-fadeIn">
+        <div className="space-y-6 animate-fadeIn pb-10">
             <SectionHeader title="Validate & Export" icon="✅" />
             
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                 {/* Validation Report */}
                 <div className="space-y-4">
                     <div className={`p-4 rounded-lg border ${isValid ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
@@ -1229,7 +1419,7 @@ const App: React.FC = () => {
 
                     <div className="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
                         <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 font-bold text-gray-700 text-sm">Validation Report</div>
-                        <div className="divide-y divide-gray-100 max-h-[400px] overflow-y-auto">
+                        <div className="divide-y divide-gray-100 max-h-[300px] overflow-y-auto">
                             {errors.length === 0 && warnings.length === 0 && (
                                 <div className="p-4 text-center text-gray-500 italic text-sm">No issues found.</div>
                             )}
@@ -1256,38 +1446,59 @@ const App: React.FC = () => {
                 </div>
 
                 {/* XML Preview */}
-                <div className="space-y-4 flex flex-col">
-                     <div className="bg-white border border-gray-200 rounded-lg shadow-sm flex flex-col flex-1">
-                          <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 font-bold text-gray-700 text-sm flex justify-between items-center">
-                              <span>XML Preview</span>
-                              <button 
-                                  onClick={() => navigator.clipboard.writeText(xmlPreview)}
-                                  className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
-                              >
-                                  Copy Code
-                              </button>
-                          </div>
-                          <div className="relative flex-1 min-h-[400px] bg-gray-900">
-                              <textarea 
-                                  readOnly 
-                                  value={xmlPreview} 
-                                  className="absolute inset-0 w-full h-full p-4 bg-gray-900 text-green-400 font-mono text-xs resize-none outline-none"
-                              />
-                          </div>
-                          <div className="p-4 bg-gray-50 border-t border-gray-200">
-                              <button 
-                                  onClick={handleExport}
-                                  disabled={!isValid}
-                                  className={`w-full py-3 rounded-lg font-bold text-white flex justify-center items-center gap-2 shadow-sm transition-all ${
-                                      isValid 
-                                      ? 'bg-indigo-600 hover:bg-indigo-700 hover:shadow' 
-                                      : 'bg-gray-400 cursor-not-allowed opacity-70'
-                                  }`}
-                              >
-                                  <span>💾</span> Download DRMD XML
-                              </button>
-                          </div>
-                     </div>
+                 <div className="bg-white border border-gray-200 rounded-lg shadow-sm flex flex-col min-h-[400px]">
+                      <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 font-bold text-gray-700 text-sm flex justify-between items-center">
+                          <span>XML Preview</span>
+                          <button 
+                              onClick={() => navigator.clipboard.writeText(xmlPreview)}
+                              className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                          >
+                              Copy Code
+                          </button>
+                      </div>
+                      <div className="relative flex-1 bg-gray-900" style={{minHeight: '300px'}}>
+                          <textarea 
+                              readOnly 
+                              value={xmlPreview} 
+                              className="absolute inset-0 w-full h-full p-4 bg-gray-900 text-green-400 font-mono text-xs resize-none outline-none"
+                          />
+                      </div>
+                      <div className="p-4 bg-gray-50 border-t border-gray-200">
+                          <button 
+                              onClick={handleExport}
+                              disabled={!isValid}
+                              className={`w-full py-3 rounded-lg font-bold text-white flex justify-center items-center gap-2 shadow-sm transition-all ${
+                                  isValid 
+                                  ? 'bg-indigo-600 hover:bg-indigo-700 hover:shadow' 
+                                  : 'bg-gray-400 cursor-not-allowed opacity-70'
+                              }`}
+                          >
+                              <span>💾</span> Download DRMD XML
+                          </button>
+                      </div>
+                 </div>
+            </div>
+
+            {/* HTML Preview - Full Width Below */}
+            <div className="w-full space-y-2">
+                 <h3 className="font-bold text-gray-700">HTML Report Preview</h3>
+                 <div className="bg-white border border-gray-200 rounded-lg shadow-sm flex flex-col h-[800px]">
+                      <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 font-bold text-gray-700 text-sm flex justify-between items-center">
+                          <span>Preview</span>
+                          <button onClick={handleHtmlExport} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">Download HTML</button>
+                      </div>
+                      <div className="flex-1 p-0 bg-white overflow-hidden relative">
+                           <iframe 
+                              srcDoc={htmlPreview} 
+                              title="HTML Preview" 
+                              className="w-full h-full border-none absolute inset-0" 
+                           />
+                      </div>
+                      <div className="p-4 bg-gray-50 border-t border-gray-200">
+                           <button onClick={handleHtmlExport} className="w-full py-3 rounded-lg font-bold text-white flex justify-center items-center gap-2 shadow-sm bg-indigo-600 hover:bg-indigo-700 transition-all">
+                              <span>📄</span> Download HTML Report
+                          </button>
+                      </div>
                 </div>
             </div>
         </div>
@@ -1296,7 +1507,6 @@ const App: React.FC = () => {
 
   return (
     <div className="h-screen flex flex-col bg-gray-50 font-sans text-gray-900">
-      {/* Header */}
       <header className="bg-white border-b border-gray-200 p-4 flex justify-between items-center z-10 shadow-sm">
         <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-lg flex items-center justify-center text-white text-xl">🔬</div>
@@ -1323,10 +1533,8 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
         
-        {/* Left Panel: PDF Viewer */}
         <div className="w-[45%] bg-gray-800 border-r border-gray-700 flex flex-col relative">
           {pdfUrl ? (
             <PdfViewer url={pdfUrl} highlightData={highlightData} />
@@ -1354,7 +1562,6 @@ const App: React.FC = () => {
           )}
         </div>
 
-        {/* Right Panel: Application Tabs */}
         <div className="w-[55%] flex flex-col bg-white">
           <div className="flex border-b border-gray-200 bg-gray-50 overflow-x-auto hide-scrollbar">
             {[
