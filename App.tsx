@@ -220,32 +220,39 @@ const PdfPage: React.FC<{
     const wrapperRef = useRef<HTMLDivElement>(null);
     const [viewport, setViewport] = useState<PdfViewport | null>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
+    const [rotation, setRotation] = useState(0);
+    const [pageRotation, setPageRotation] = useState(0);
 
     // 1. Render PDF Content
     useEffect(() => {
         const render = async () => {
             if (!pdfDoc || !wrapperRef.current || !canvasRef.current) return;
             
-            // Only re-render canvas if it's the first load or if text highlighting is requested (legacy fallback)
             const isTextHighlight = highlightData?.type === 'text';
-
             const page = await pdfDoc.getPage(pageNum);
-            const containerWidth = wrapperRef.current.clientWidth || 800; // Fallback width
+
+            // SAFEST METHOD: Let pdf.js calculate the default viewport to extract the true native rotation
+            const defaultViewport = page.getViewport({ scale: 1 });
+            const nativeRotation = defaultViewport.rotation;
+            setPageRotation(nativeRotation); 
+
+            const containerWidth = wrapperRef.current.clientWidth || 800; 
             
-            // Calculate scale to fit container with high DPI support
-            // We ensure a minimum scale of 1.5 for text clarity
-            const unscaledViewport = page.getViewport({ scale: 1 });
+            // Add any user-triggered manual rotation to the native rotation
+            const totalRotation = (nativeRotation + rotation) % 360;
+            
+            const unscaledViewport = page.getViewport({ scale: 1, rotation: totalRotation });
             const pixelRatio = window.devicePixelRatio || 1;
             const desiredScale = (containerWidth * pixelRatio) / unscaledViewport.width;
             const scale = Math.max(desiredScale, 1.5);
             
-            const newViewport = page.getViewport({ scale });
+            const newViewport = page.getViewport({ scale, rotation: totalRotation });
             setViewport(newViewport);
             
             const canvas = canvasRef.current;
             const ctx = canvas.getContext('2d');
             
-            if (ctx && (canvas.width !== newViewport.width || isTextHighlight)) {
+            if (ctx && (canvas.width !== newViewport.width || canvas.height !== newViewport.height || isTextHighlight)) {
                 canvas.width = newViewport.width;
                 canvas.height = newViewport.height;
                 
@@ -263,7 +270,6 @@ const PdfPage: React.FC<{
                             const str = (item as any).str.toLowerCase();
                             if (str.includes(queryLower)) {
                                 const transform = (item as any).transform;
-                                // pdf.js transform: [scaleX, skewY, skewX, scaleY, x, y]
                                 const x = transform[4];
                                 const y = transform[5];
                                 const w = (item as any).width;
@@ -273,20 +279,17 @@ const PdfPage: React.FC<{
                                 ctx.fillStyle = 'rgba(255, 215, 0, 0.4)';
                                 ctx.globalCompositeOperation = 'multiply'; 
 
-                                // Convert PDF point coords to Viewport pixel coords
                                 const tx = newViewport.transform;
                                 const canvasX = x * tx[0] + y * tx[2] + tx[4];
                                 const canvasY = x * tx[1] + y * tx[3] + tx[5];
                                 const widthScaled = w * tx[0];
                                 const heightScaled = h * Math.abs(tx[3]);
 
-                                // Draw highlight on canvas
                                 ctx.fillRect(canvasX, canvasY - heightScaled * 0.8, widthScaled, heightScaled * 1.4);
                                 ctx.restore();
                                 matchFound = true;
                             }
                         }
-                        // Auto-scroll for text match if found on this page
                         if (matchFound) {
                             canvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
                         }
@@ -295,42 +298,57 @@ const PdfPage: React.FC<{
             }
         };
         render();
-    }, [pdfDoc, pageNum, highlightData?.type === 'text' ? highlightData.value : 'resize-trigger']);
+    }, [pdfDoc, pageNum, rotation, highlightData?.type === 'text' ? highlightData.value : 'resize-trigger']);
 
-    // 2. Coordinate Highlighting (DOM Overlay - The "Best Method")
+    // 2. Coordinate Highlighting (DOM Overlay)
     const highlightBox = useMemo(() => {
         if (!highlightData || highlightData.type !== 'coords') return null;
         
-        // Gemini: [pageIndex, ymin, xmin, ymax, xmax] (0-1000 scale)
-        const [p, rawYmin, xmin, rawYmax, xmax] = highlightData.value as number[];
+        const [p, y1, x1, y2, x2] = highlightData.value as number[];
         
         if (p !== pageNum) return null;
 
-        // Apply dynamic padding to height to fix "small box" issues
+        const rotatePoint = (x: number, y: number, deg: number) => {
+            switch ((deg + 360) % 360) {
+                case 90: return { x: 1000 - y, y: x };
+                case 180: return { x: 1000 - x, y: 1000 - y };
+                case 270: return { x: y, y: 1000 - x };
+                default: return { x, y };
+            }
+        };
+
+        // We only apply manual user rotation to the highlights because Gemini's coordinates are already upright
+        const userRotationOnly = ((rotation) % 360 + 360) % 360;
+
+        const p1 = rotatePoint(x1, y1, userRotationOnly);
+        const p2 = rotatePoint(x2, y2, userRotationOnly);
+
+        const rawYmin = Math.min(p1.y, p2.y);
+        const rawYmax = Math.max(p1.y, p2.y);
+        const rawXmin = Math.min(p1.x, p2.x);
+        const rawXmax = Math.max(p1.x, p2.x);
+
         const rawHeight = rawYmax - rawYmin;
         const paddingFactor = rawHeight < 50 ? 0.5 : 0.2; 
         const padding = rawHeight * paddingFactor;
         
-        // Apply assymetric padding
         const ymin = Math.max(0, rawYmin - (padding * 0.1));
         const ymax = Math.min(1000, rawYmax + (padding * 0.9));
 
         return {
             top: `${ymin / 10}%`,
-            left: `${xmin / 10}%`,
-            width: `${(xmax - xmin) / 10}%`,
+            left: `${rawXmin / 10}%`,
+            width: `${(rawXmax - rawXmin) / 10}%`,
             height: `${(ymax - ymin) / 10}%`
         };
-    }, [highlightData, pageNum]);
+    }, [highlightData, pageNum, pageRotation, rotation]);
 
-    // Scroll effect for Coords
     useEffect(() => {
         if (highlightBox && scrollRef.current) {
             scrollRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
     }, [highlightBox]);
 
-    // Use aspect-ratio style to strictly enforce the relationship between width/height based on the PDF Page
     const containerStyle = useMemo(() => {
         if (!viewport) return { minHeight: '300px' };
         return { aspectRatio: `${viewport.width} / ${viewport.height}` };
@@ -339,9 +357,18 @@ const PdfPage: React.FC<{
     return (
         <div 
             ref={wrapperRef} 
-            className="relative w-full mb-4 shadow-md bg-white"
+            className="relative w-full mb-4 shadow-md bg-white group"
             style={containerStyle}
         >
+            <div className="absolute top-2 right-2 z-20">
+                <button 
+                    onClick={() => setRotation((r) => (r + 90) % 360)}
+                    className="bg-white/90 hover:bg-white text-gray-700 p-1.5 rounded shadow-sm text-xs font-bold border border-gray-200"
+                    title="Rotate Page"
+                >
+                    ↻ Rotate
+                </button>
+            </div>
             <canvas 
                 ref={canvasRef} 
                 className="block w-full h-full rounded-sm" 
@@ -355,7 +382,7 @@ const PdfPage: React.FC<{
                         left: highlightBox.left,
                         width: highlightBox.width,
                         height: highlightBox.height,
-                        pointerEvents: 'none' // Allow clicks to pass through to canvas/text if needed
+                        pointerEvents: 'none'
                     }}
                 />
             )}
