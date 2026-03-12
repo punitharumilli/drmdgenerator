@@ -149,11 +149,11 @@ const generateHtmlReport = (data: DRMD) => {
     const customStmtRows = data.statements.custom.map(s => renderRow(s.name, s.content)).join('');
 
     // Comment Section
-    const commentHtml = data.generalComment ? `
+    const commentHtml = data.generalComment || (data.binaryDocuments && data.binaryDocuments.length > 0) ? `
         <h2>Comment and Document</h2>
         <table>
             ${renderRow('General Comment', data.generalComment)}
-            ${renderRow('Attached Document', data.binaryDocument ? data.binaryDocument.fileName : 'None')}
+            ${renderRow('Attached Documents', data.binaryDocuments && data.binaryDocuments.length > 0 ? data.binaryDocuments.map(d => d.fileName).join(', ') : 'None')}
         </table>
     ` : '';
 
@@ -317,7 +317,7 @@ const PdfPage: React.FC<{
             }
         };
 
-        // We only apply manual user rotation to the highlights because Gemini's coordinates are already upright
+        // We only apply manual user rotation to the highlights because Gemini's coordinates are already relative to the upright page
         const userRotationOnly = ((rotation) % 360 + 360) % 360;
 
         const p1 = rotatePoint(x1, y1, userRotationOnly);
@@ -755,7 +755,16 @@ const App: React.FC = () => {
                           } 
                       },
                       materials: newMats.length > 0 ? newMats : prev.materials,
-                      properties: newProps.length > 0 ? newProps : prev.properties
+                      properties: newProps.length > 0 ? newProps : prev.properties,
+                      generalComment: prev.generalComment || "For additional information please refer to the pdf certificate",
+                      binaryDocuments: [
+                          ...(prev.binaryDocuments || []),
+                          {
+                              fileName: file.name,
+                              mimeType: file.type || "application/pdf",
+                              data: base64Content
+                          }
+                      ]
                   };
               });
               setActiveTab("admin");
@@ -783,17 +792,21 @@ const App: React.FC = () => {
                   const xmlContent = e.target?.result as string;
                   const parsedData = parseDrmdXml(xmlContent);
                   
-                  if (parsedData.binaryDocument && parsedData.binaryDocument.data) {
+                  if (parsedData.binaryDocuments && parsedData.binaryDocuments.length > 0) {
                       try {
-                          const byteCharacters = atob(parsedData.binaryDocument.data);
-                          const byteNumbers = new Array(byteCharacters.length);
-                          for (let i = 0; i < byteCharacters.length; i++) {
-                              byteNumbers[i] = byteCharacters.charCodeAt(i);
+                          // Try to load the first PDF found in the documents
+                          const pdfDoc = parsedData.binaryDocuments.find((d: any) => d.mimeType === 'application/pdf') || parsedData.binaryDocuments[0];
+                          if (pdfDoc && pdfDoc.data) {
+                              const byteCharacters = atob(pdfDoc.data);
+                              const byteNumbers = new Array(byteCharacters.length);
+                              for (let i = 0; i < byteCharacters.length; i++) {
+                                  byteNumbers[i] = byteCharacters.charCodeAt(i);
+                              }
+                              const byteArray = new Uint8Array(byteNumbers);
+                              const blob = new Blob([byteArray], {type: pdfDoc.mimeType || 'application/pdf'}); 
+                              const pdfUrl = URL.createObjectURL(blob);
+                              setPdfUrl(pdfUrl);
                           }
-                          const byteArray = new Uint8Array(byteNumbers);
-                          const blob = new Blob([byteArray], {type: 'application/pdf'}); 
-                          const pdfUrl = URL.createObjectURL(blob);
-                          setPdfUrl(pdfUrl);
                       } catch (err) {
                           console.warn("Failed to load embedded PDF from XML", err);
                       }
@@ -1299,11 +1312,14 @@ const App: React.FC = () => {
                 
                 setDrmdData(p => ({
                     ...p, 
-                    binaryDocument: {
-                        fileName: file.name,
-                        mimeType: file.type || "application/octet-stream",
-                        data: base64Data
-                    }
+                    binaryDocuments: [
+                        ...(p.binaryDocuments || []),
+                        {
+                            fileName: file.name,
+                            mimeType: file.type || "application/octet-stream",
+                            data: base64Data
+                        }
+                    ]
                 }));
             };
             reader.readAsDataURL(file);
@@ -1325,42 +1341,49 @@ const App: React.FC = () => {
           </div>
 
           <div className="space-y-2">
-              <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Upload Document</h3>
+              <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Upload Documents</h3>
               
-              {!drmdData.binaryDocument ? (
-                  <div className="border-2 border-dashed border-indigo-200 bg-indigo-50/30 rounded-lg p-8 flex flex-col items-center justify-center text-center transition hover:bg-indigo-50">
-                      <div className="text-4xl mb-2 text-indigo-300">☁️</div>
-                      <p className="font-medium text-gray-700">Drag and drop file here</p>
-                      <p className="text-xs text-gray-500 mt-1 mb-4">Limit 200MB per file • PDF, DOC, DOCX, TXT</p>
-                      <input 
-                          type="file" 
-                          id="doc-upload"
-                          className="hidden" 
-                          accept=".pdf,.doc,.docx,.txt"
-                          onChange={handleDocUpload}
-                      />
-                      <label htmlFor="doc-upload" className="cursor-pointer bg-white border border-gray-300 px-4 py-2 rounded-md text-sm font-medium hover:bg-gray-50 text-gray-700 shadow-sm">
-                          Browse files
-                      </label>
-                  </div>
-              ) : (
-                  <div className="bg-white border border-gray-200 rounded-lg p-4 flex items-center justify-between shadow-sm">
-                      <div className="flex items-center gap-3">
-                          <div className="text-2xl">📄</div>
-                          <div>
-                              <p className="font-bold text-sm text-gray-800">{drmdData.binaryDocument.fileName}</p>
-                              <p className="text-xs text-gray-500">Document attached</p>
+              {drmdData.binaryDocuments && drmdData.binaryDocuments.length > 0 && (
+                  <div className="space-y-3 mb-4">
+                      {drmdData.binaryDocuments.map((doc, idx) => (
+                          <div key={idx} className="bg-white border border-gray-200 rounded-lg p-4 flex items-center justify-between shadow-sm">
+                              <div className="flex items-center gap-3">
+                                  <div className="text-2xl">📄</div>
+                                  <div>
+                                      <p className="font-bold text-sm text-gray-800">{doc.fileName}</p>
+                                      <p className="text-xs text-gray-500">Document attached</p>
+                                  </div>
+                              </div>
+                              <button 
+                                  onClick={() => setDrmdData(p => ({
+                                      ...p, 
+                                      binaryDocuments: p.binaryDocuments.filter((_, i) => i !== idx)
+                                  }))}
+                                  className="text-red-500 hover:text-red-700 p-2"
+                                  title="Remove file"
+                              >
+                                  ✕
+                              </button>
                           </div>
-                      </div>
-                      <button 
-                          onClick={() => setDrmdData(p => ({...p, binaryDocument: null}))}
-                          className="text-red-500 hover:text-red-700 p-2"
-                          title="Remove file"
-                      >
-                          ✕
-                      </button>
+                      ))}
                   </div>
               )}
+
+              <div className="border-2 border-dashed border-indigo-200 bg-indigo-50/30 rounded-lg p-8 flex flex-col items-center justify-center text-center transition hover:bg-indigo-50">
+                  <div className="text-4xl mb-2 text-indigo-300">☁️</div>
+                  <p className="font-medium text-gray-700">Drag and drop file here</p>
+                  <p className="text-xs text-gray-500 mt-1 mb-4">Limit 200MB per file • PDF, DOC, DOCX, TXT</p>
+                  <input 
+                      type="file" 
+                      id="doc-upload"
+                      className="hidden" 
+                      accept=".pdf,.doc,.docx,.txt"
+                      onChange={handleDocUpload}
+                  />
+                  <label htmlFor="doc-upload" className="cursor-pointer bg-white border border-gray-300 px-4 py-2 rounded-md text-sm font-medium hover:bg-gray-50 text-gray-700 shadow-sm">
+                      Browse files
+                  </label>
+              </div>
           </div>
       </div>
     );

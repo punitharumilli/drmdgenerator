@@ -233,13 +233,16 @@ export const parseDrmdXml = (xmlString: string): DRMD => {
     // --- Comments & Document ---
     data.generalComment = getTagContent(doc, "drmd:comment");
     
-    const docContent = getTagContent(doc, "drmd:document");
-    if (docContent) {
-        data.binaryDocument = {
-            fileName: "imported_document.pdf",
-            mimeType: "application/pdf", 
-            data: docContent.trim()
-        };
+    const docElements = doc.getElementsByTagName("drmd:document");
+    if (docElements.length > 0) {
+        data.binaryDocuments = Array.from(docElements).map((el, index) => {
+            const content = el.textContent || "";
+            return {
+                fileName: `imported_document_${index + 1}.pdf`,
+                mimeType: "application/pdf", 
+                data: content.trim()
+            };
+        }).filter(d => d.data.length > 0);
     }
 
     return data;

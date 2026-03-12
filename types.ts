@@ -144,11 +144,11 @@ export interface DRMD {
     documents: AdditionalDocument[];
     // New fields for the "Comment and Document" tab
     generalComment: string;
-    binaryDocument: {
+    binaryDocuments: {
         fileName: string;
         mimeType: string;
         data: string; // Base64 data
-    } | null;
+    }[];
 }
 
 // Constants for Initial States
@@ -229,5 +229,5 @@ export const INITIAL_DRMD: DRMD = {
     comments: [],
     documents: [],
     generalComment: "",
-    binaryDocument: null
+    binaryDocuments: []
 };

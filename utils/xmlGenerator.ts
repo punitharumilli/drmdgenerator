@@ -1,4 +1,5 @@
 
+
 import { DRMD } from "../types";
 import { convertToDSI } from "./unitConverter";
 import { getCasNumber } from "./casMapping";
@@ -157,7 +158,28 @@ ${renderValidity(data.administrativeData)}
       </drmd:name>
       <drmd:description>
         <dcc:content>${escapeXml(mat.description)}</dcc:content>
-      </drmd:description>
+      </drmd:description>`;
+        
+        // Add Material Identifiers (e.g. BAM-M386a)
+        if (mat.materialIdentifiers && mat.materialIdentifiers.length > 0) {
+            // Check if there are any valid identifiers to render
+            const validIds = mat.materialIdentifiers.filter(id => id.value && id.value.trim() !== "");
+            if (validIds.length > 0) {
+                materialsXml += `
+      <drmd:materialIdentifiers>`;
+                validIds.forEach(id => {
+                    materialsXml += `
+        <drmd:materialIdentifier>
+          <drmd:scheme>${escapeXml(id.scheme || 'MaterialID')}</drmd:scheme>
+          <drmd:value>${escapeXml(id.value)}</drmd:value>
+        </drmd:materialIdentifier>`;
+                });
+                materialsXml += `
+      </drmd:materialIdentifiers>`;
+            }
+        }
+
+        materialsXml += `
       <drmd:minimumSampleSize>
         <dcc:itemQuantity>${renderPrimitiveQuantity(mat.minimumSampleSize)}
         </dcc:itemQuantity>
@@ -321,9 +343,13 @@ ${renderValidity(data.administrativeData)}
         extraXml += `
   <drmd:comment>${escapeXml(data.generalComment)}</drmd:comment>`;
     }
-    if (data.binaryDocument && data.binaryDocument.data) {
-        extraXml += `
-  <drmd:document>${data.binaryDocument.data}</drmd:document>`;
+    if (data.binaryDocuments && data.binaryDocuments.length > 0) {
+        data.binaryDocuments.forEach(doc => {
+            if (doc.data) {
+                extraXml += `
+  <drmd:document>${doc.data}</drmd:document>`;
+            }
+        });
     }
 
     const footer = `
