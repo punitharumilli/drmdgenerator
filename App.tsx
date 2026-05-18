@@ -215,7 +215,8 @@ const PdfPage: React.FC<{
     pdfDoc: any; 
     pageNum: number; 
     highlightData?: HighlightData | null; 
-}> = ({ pdfDoc, pageNum, highlightData }) => {
+    onMatchStatus?: (pageNum: number, found: boolean) => void;
+}> = ({ pdfDoc, pageNum, highlightData, onMatchStatus }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const wrapperRef = useRef<HTMLDivElement>(null);
     const [viewport, setViewport] = useState<PdfViewport | null>(null);
@@ -263,33 +264,128 @@ const PdfPage: React.FC<{
                 // --- Text Search Based Highlighting (Canvas Fallback) ---
                 if (highlightData?.type === 'text' && typeof highlightData.value === 'string') {
                      const queryLower = highlightData.value.toLowerCase().trim();
-                     if (queryLower.length > 0) {
+                     const queryNoSpace = queryLower.replace(/\s+/g, '');
+
+                     if (queryNoSpace.length > 0) {
                         const textContent = await page.getTextContent();
                         let matchFound = false;
+                        
+                        let fullTextNoSpace = '';
+                        const itemSpans: Array<{start: number, end: number, item: any}> = [];
+                        
                         for (const item of textContent.items) {
-                            const str = (item as any).str.toLowerCase();
-                            if (str.includes(queryLower)) {
-                                const transform = (item as any).transform;
-                                const x = transform[4];
-                                const y = transform[5];
-                                const w = (item as any).width;
-                                const h = (item as any).height || 12;
+                            const strNoSpace = (item as any).str.toLowerCase().replace(/\s+/g, '');
+                            if (!strNoSpace) continue;
+                            
+                            const start = fullTextNoSpace.length;
+                            fullTextNoSpace += strNoSpace;
+                            const end = fullTextNoSpace.length;
+                            itemSpans.push({ start, end, item });
+                        }
 
-                                ctx.save();
-                                ctx.fillStyle = 'rgba(255, 215, 0, 0.4)';
-                                ctx.globalCompositeOperation = 'multiply'; 
-
-                                const tx = newViewport.transform;
-                                const canvasX = x * tx[0] + y * tx[2] + tx[4];
-                                const canvasY = x * tx[1] + y * tx[3] + tx[5];
-                                const widthScaled = w * tx[0];
-                                const heightScaled = h * Math.abs(tx[3]);
-
-                                ctx.fillRect(canvasX, canvasY - heightScaled * 0.8, widthScaled, heightScaled * 1.4);
-                                ctx.restore();
-                                matchFound = true;
+                        const matchIndices: number[] = [];
+                        // Prevent short queries (like "US") from matching as substrings inside larger unspaced words (like "used")
+                        if (queryNoSpace.length > 3) {
+                            let idx = fullTextNoSpace.indexOf(queryNoSpace);
+                            while (idx !== -1) {
+                                matchIndices.push(idx);
+                                idx = fullTextNoSpace.indexOf(queryNoSpace, idx + 1);
                             }
                         }
+
+                        if (matchIndices.length > 0) {
+                            for (const matchIndex of matchIndices) {
+                                const matchStart = matchIndex;
+                                const matchEnd = matchIndex + queryNoSpace.length;
+                                
+                                for (const span of itemSpans) {
+                                    if (span.end > matchStart && span.start < matchEnd) {
+                                        const item = span.item;
+                                        const transform = (item as any).transform;
+                                        const x = transform[4];
+                                        const y = transform[5];
+                                        const w = (item as any).width;
+                                        const h = (item as any).height || 12;
+
+                                        ctx.save();
+                                        ctx.fillStyle = 'rgba(255, 215, 0, 0.4)';
+                                        ctx.globalCompositeOperation = 'multiply'; 
+
+                                        const tx = newViewport.transform;
+                                        const canvasX = x * tx[0] + y * tx[2] + tx[4];
+                                        const canvasY = x * tx[1] + y * tx[3] + tx[5];
+                                        const widthScaled = w * tx[0];
+                                        const heightScaled = h * Math.abs(tx[3]);
+
+                                        ctx.fillRect(canvasX, canvasY - heightScaled * 0.8, widthScaled, heightScaled * 1.4);
+                                        ctx.restore();
+                                        ctx.save();
+                                        ctx.strokeStyle = 'rgba(234, 179, 8, 1)'; // yellow-500
+                                        ctx.lineWidth = 2;
+                                        ctx.strokeRect(canvasX, canvasY - heightScaled * 0.8, widthScaled, heightScaled * 1.4);
+                                        ctx.restore();
+                                        matchFound = true;
+                                    }
+                                }
+                            }
+                        } else {
+                            // Fallback if exact substring not found
+                            for (const item of textContent.items) {
+                                const str = (item as any).str.toLowerCase().trim();
+                                const strNoSpace = str.replace(/\s+/g, '');
+                                if (!strNoSpace) continue;
+                                
+                                let isMatch = false;
+                                
+                                // Exact match
+                                if (queryNoSpace === strNoSpace) {
+                                    isMatch = true;
+                                } 
+                                // Long substrings (strict)
+                                else if (queryNoSpace.length >= 8 && strNoSpace.includes(queryNoSpace)) {
+                                    isMatch = true;
+                                }
+                                // Short queries need exact isolated match
+                                else if (queryLower.length <= 3) {
+                                    const words = str.split(/[\s,.-]+/);
+                                    if (words.includes(queryLower)) {
+                                        isMatch = true;
+                                    }
+                                }
+                                
+                                if (isMatch) {
+                                    const transform = (item as any).transform;
+                                    const x = transform[4];
+                                    const y = transform[5];
+                                    const w = (item as any).width;
+                                    const h = (item as any).height || 12;
+
+                                    ctx.save();
+                                    ctx.fillStyle = 'rgba(255, 215, 0, 0.4)';
+                                    ctx.globalCompositeOperation = 'multiply'; 
+
+                                    const tx = newViewport.transform;
+                                    const canvasX = x * tx[0] + y * tx[2] + tx[4];
+                                    const canvasY = x * tx[1] + y * tx[3] + tx[5];
+                                    const widthScaled = w * tx[0];
+                                    const heightScaled = h * Math.abs(tx[3]);
+
+                                    ctx.fillRect(canvasX, canvasY - heightScaled * 0.8, widthScaled, heightScaled * 1.4);
+                                    ctx.restore();
+                                    ctx.save();
+                                    ctx.strokeStyle = 'rgba(234, 179, 8, 1)'; // yellow-500
+                                    ctx.lineWidth = 2;
+                                    ctx.strokeRect(canvasX, canvasY - heightScaled * 0.8, widthScaled, heightScaled * 1.4);
+                                    ctx.restore();
+                                    matchFound = true;
+                                }
+                            }
+                        }
+
+                        if (onMatchStatus) {
+                            onMatchStatus(pageNum, matchFound);
+                        }
+
                         if (matchFound) {
                             canvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
                         }
@@ -376,7 +472,7 @@ const PdfPage: React.FC<{
             {highlightBox && (
                 <div 
                     ref={scrollRef}
-                    className="absolute border-2 border-red-600 bg-red-500/25 z-10 animate-pulse shadow-sm mix-blend-multiply"
+                    className="absolute border-2 border-yellow-500 bg-yellow-400/40 z-10 animate-pulse shadow-sm mix-blend-multiply"
                     style={{
                         top: highlightBox.top,
                         left: highlightBox.left,
@@ -390,9 +486,30 @@ const PdfPage: React.FC<{
     )
 }
 
-const PdfViewer: React.FC<{ url: string; highlightData?: HighlightData | null }> = ({ url, highlightData }) => {
+const PdfViewer: React.FC<{ 
+    url: string; 
+    highlightData?: HighlightData | null;
+    onTextNotFound?: () => void;
+}> = ({ url, highlightData, onTextNotFound }) => {
     const [pdfDoc, setPdfDoc] = useState<any>(null);
     const [pages, setPages] = useState<number[]>([]);
+    const [matchStatus, setMatchStatus] = useState<Record<number, boolean>>({});
+
+    useEffect(() => {
+        setMatchStatus({});
+    }, [highlightData]);
+
+    useEffect(() => {
+        if (highlightData?.type === 'text' && pages.length > 0) {
+            const keys = Object.keys(matchStatus);
+            if (keys.length === pages.length) {
+                const anyFound = Object.values(matchStatus).some(v => v);
+                if (!anyFound && onTextNotFound) {
+                    onTextNotFound();
+                }
+            }
+        }
+    }, [matchStatus, pages.length, highlightData, onTextNotFound]);
 
     useEffect(() => {
         const loadPdf = async () => {
@@ -419,6 +536,7 @@ const PdfViewer: React.FC<{ url: string; highlightData?: HighlightData | null }>
                     pdfDoc={pdfDoc} 
                     pageNum={pageNum} 
                     highlightData={highlightData} 
+                    onMatchStatus={(page, found) => setMatchStatus(p => ({ ...p, [page]: found }))}
                 />
             ))}
         </div>
@@ -434,9 +552,17 @@ const App: React.FC = () => {
   const [statusMessage, setStatusMessage] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [highlightData, setHighlightData] = useState<HighlightData | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const xmlInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+      if (toastMessage) {
+          const timer = setTimeout(() => setToastMessage(null), 15000);
+          return () => clearTimeout(timer);
+      }
+  }, [toastMessage]);
 
   useEffect(() => {
     setDrmdData(prev => {
@@ -448,13 +574,35 @@ const App: React.FC = () => {
     });
   }, []);
 
-  const handleHighlight = (data: string | number[] | undefined) => {
-      if (!data) return;
+  const handleHighlight = (primaryTarget?: number[] | string | null, secondaryTarget?: number[] | string | null, textFallback?: string) => {
+      // 1. Try primary target (usually exact field coordinates)
+      if (Array.isArray(primaryTarget) && primaryTarget.length === 5 && primaryTarget[3] > primaryTarget[1] && primaryTarget[4] > primaryTarget[2]) {
+          setHighlightData({ type: 'coords', value: primaryTarget });
+          return;
+      }
       
-      if (Array.isArray(data) && data.length === 5) {
-          setHighlightData({ type: 'coords', value: data });
-      } else if (typeof data === 'string' && data.length > 0) {
-          setHighlightData({ type: 'text', value: data });
+      // 2. Fallback to primary text or textFallback text search
+      const textToSearch = typeof primaryTarget === 'string' && primaryTarget.trim().length > 0 ? primaryTarget : 
+                           (typeof textFallback === 'string' && textFallback.trim().length > 0 ? textFallback : null);
+                           
+      if (textToSearch) {
+          setHighlightData({ type: 'text', value: textToSearch });
+          return;
+      }
+
+      // 3. Fallback to secondary target (usually section coordinates)
+      if (Array.isArray(secondaryTarget) && secondaryTarget.length === 5 && secondaryTarget[3] > secondaryTarget[1]) {
+          setHighlightData({ type: 'coords', value: secondaryTarget });
+          return;
+      }
+      
+      if (typeof secondaryTarget === 'string' && secondaryTarget.trim().length > 0) {
+          setHighlightData({ type: 'text', value: secondaryTarget });
+          return;
+      }
+      
+      if (textFallback) {
+          setToastMessage("This information is created by VLM based on understanding and is not directly found in the PDF.");
       }
   };
 
@@ -897,7 +1045,7 @@ const App: React.FC = () => {
                 <Select label="Title of Document *" value={drmdData.administrativeData.title} options={ALLOWED_TITLES} onChange={(v) => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, title: v}}))} />
                 <div className="flex gap-2 items-end">
                     <div className="flex-1">
-                        <Input label="Unique Identifier *" value={drmdData.administrativeData.uniqueIdentifier} onChange={(v) => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, uniqueIdentifier: v}}))} onInfoClick={() => handleHighlight(drmdData.administrativeData.fieldCoordinates?.['uniqueIdentifier'] || drmdData.administrativeData.uniqueIdentifier)} />
+                        <Input label="Unique Identifier *" value={drmdData.administrativeData.uniqueIdentifier} onChange={(v) => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, uniqueIdentifier: v}}))} onFocus={() => handleHighlight(drmdData.administrativeData.fieldCoordinates?.uniqueIdentifier, null, drmdData.administrativeData.uniqueIdentifier)} onInfoClick={() => handleHighlight(drmdData.administrativeData.fieldCoordinates?.uniqueIdentifier, null, drmdData.administrativeData.uniqueIdentifier)} />
                     </div>
                     <button onClick={() => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, uniqueIdentifier: generateUUID()}}))} className="bg-gray-200 p-2 rounded mb-[2px] hover:bg-gray-300" title="Generate new UUID">🔄</button>
                 </div>
@@ -950,21 +1098,21 @@ const App: React.FC = () => {
                      
                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-3">
-                            <Input label="Name *" value={prod.name} onFocus={() => handleHighlight(prod.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].name = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} onInfoClick={() => handleHighlight(prod.sectionCoordinates)} />
-                            <Input label="Email *" value={prod.email} onFocus={() => handleHighlight(prod.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].email = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} onInfoClick={() => handleHighlight(prod.sectionCoordinates)} />
-                            <Input label="Phone" value={prod.phone} onFocus={() => handleHighlight(prod.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].phone = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} onInfoClick={() => handleHighlight(prod.sectionCoordinates)} />
+                            <Input label="Name *" value={prod.name} onFocus={() => handleHighlight(prod.fieldCoordinates?.name, prod.sectionCoordinates, prod.name)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].name = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} onInfoClick={() => handleHighlight(prod.fieldCoordinates?.name, prod.sectionCoordinates, prod.name)} />
+                            <Input label="Email *" value={prod.email} onFocus={() => handleHighlight(prod.fieldCoordinates?.email, prod.sectionCoordinates, prod.email)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].email = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} onInfoClick={() => handleHighlight(prod.fieldCoordinates?.email, prod.sectionCoordinates, prod.email)} />
+                            <Input label="Phone" value={prod.phone} onFocus={() => handleHighlight(prod.fieldCoordinates?.phone, prod.sectionCoordinates, prod.phone)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].phone = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} onInfoClick={() => handleHighlight(prod.fieldCoordinates?.phone, prod.sectionCoordinates, prod.phone)} />
                         </div>
                         <div className="space-y-3">
                              <div className="grid grid-cols-4 gap-2">
-                                <div className="col-span-3"><Input label="Street" value={prod.address.street} onFocus={() => handleHighlight(prod.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].address.street = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} onInfoClick={() => handleHighlight(prod.sectionCoordinates)} /></div>
-                                <Input label="No." value={prod.address.streetNo} onFocus={() => handleHighlight(prod.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].address.streetNo = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} onInfoClick={() => handleHighlight(prod.sectionCoordinates)} />
+                                <div className="col-span-3"><Input label="Street" value={prod.address.street} onFocus={() => handleHighlight((prod.fieldCoordinates as any)?.address?.street, prod.sectionCoordinates, prod.address.street)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].address.street = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} onInfoClick={() => handleHighlight((prod.fieldCoordinates as any)?.address?.street, prod.sectionCoordinates, prod.address.street)} /></div>
+                                <Input label="No." value={prod.address.streetNo} onFocus={() => handleHighlight((prod.fieldCoordinates as any)?.address?.streetNo, prod.sectionCoordinates, prod.address.streetNo)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].address.streetNo = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} onInfoClick={() => handleHighlight((prod.fieldCoordinates as any)?.address?.streetNo, prod.sectionCoordinates, prod.address.streetNo)} />
                              </div>
                              <div className="grid grid-cols-4 gap-2">
-                                <div className="col-span-1"><Input label="Post Code" value={prod.address.postCode} onFocus={() => handleHighlight(prod.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].address.postCode = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} onInfoClick={() => handleHighlight(prod.sectionCoordinates)} /></div>
-                                <div className="col-span-2"><Input label="City" value={prod.address.city} onFocus={() => handleHighlight(prod.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].address.city = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} onInfoClick={() => handleHighlight(prod.sectionCoordinates)} /></div>
-                                <div className="col-span-1"><Input label="Country" value={prod.address.countryCode} onFocus={() => handleHighlight(prod.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].address.countryCode = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} onInfoClick={() => handleHighlight(prod.sectionCoordinates)} /></div>
+                                <div className="col-span-1"><Input label="Post Code" value={prod.address.postCode} onFocus={() => handleHighlight((prod.fieldCoordinates as any)?.address?.postCode, prod.sectionCoordinates, prod.address.postCode)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].address.postCode = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} onInfoClick={() => handleHighlight((prod.fieldCoordinates as any)?.address?.postCode, prod.sectionCoordinates, prod.address.postCode)} /></div>
+                                <div className="col-span-2"><Input label="City" value={prod.address.city} onFocus={() => handleHighlight((prod.fieldCoordinates as any)?.address?.city, prod.sectionCoordinates, prod.address.city)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].address.city = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} onInfoClick={() => handleHighlight((prod.fieldCoordinates as any)?.address?.city, prod.sectionCoordinates, prod.address.city)} /></div>
+                                <div className="col-span-1"><Input label="Country" value={prod.address.countryCode} onFocus={() => handleHighlight((prod.fieldCoordinates as any)?.address?.countryCode, prod.sectionCoordinates, prod.address.countryCode)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].address.countryCode = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} onInfoClick={() => handleHighlight((prod.fieldCoordinates as any)?.address?.countryCode, prod.sectionCoordinates, prod.address.countryCode)} /></div>
                              </div>
-                             <Input label="Fax" value={prod.fax} onFocus={() => handleHighlight(prod.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].fax = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} onInfoClick={() => handleHighlight(prod.sectionCoordinates)} />
+                             <Input label="Fax" value={prod.fax} onFocus={() => handleHighlight(prod.fieldCoordinates?.fax, prod.sectionCoordinates, prod.fax)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].fax = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} onInfoClick={() => handleHighlight(prod.fieldCoordinates?.fax, prod.sectionCoordinates, prod.fax)} />
                         </div>
                      </div>
                 </div>
@@ -987,11 +1135,11 @@ const App: React.FC = () => {
 
                      <div className="grid grid-cols-3 gap-4">
                          <div>
-                            <Input label="Name *" value={rp.name} onFocus={() => handleHighlight(rp.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.administrativeData.responsiblePersons]; list[idx].name = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, responsiblePersons: list}})); }} onInfoClick={() => handleHighlight(rp.sectionCoordinates)} />
-                            <div className="mt-2"><Input label="Role *" value={rp.role} onFocus={() => handleHighlight(rp.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.administrativeData.responsiblePersons]; list[idx].role = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, responsiblePersons: list}})); }} onInfoClick={() => handleHighlight(rp.sectionCoordinates)} /></div>
+                            <Input label="Name *" value={rp.name} onFocus={() => handleHighlight(getMergedBox([rp.sectionCoordinates, rp.fieldCoordinates?.name, rp.fieldCoordinates?.role, rp.fieldCoordinates?.description]), null, rp.name)} onChange={(v) => { const list = [...drmdData.administrativeData.responsiblePersons]; list[idx].name = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, responsiblePersons: list}})); }} onInfoClick={() => handleHighlight(getMergedBox([rp.sectionCoordinates, rp.fieldCoordinates?.name, rp.fieldCoordinates?.role, rp.fieldCoordinates?.description]), null, rp.name)} />
+                            <div className="mt-2"><Input label="Role *" value={rp.role} onFocus={() => handleHighlight(getMergedBox([rp.sectionCoordinates, rp.fieldCoordinates?.name, rp.fieldCoordinates?.role, rp.fieldCoordinates?.description]), null, rp.role)} onChange={(v) => { const list = [...drmdData.administrativeData.responsiblePersons]; list[idx].role = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, responsiblePersons: list}})); }} onInfoClick={() => handleHighlight(getMergedBox([rp.sectionCoordinates, rp.fieldCoordinates?.name, rp.fieldCoordinates?.role, rp.fieldCoordinates?.description]), null, rp.role)} /></div>
                          </div>
                          <div>
-                            <TextArea label="Description" value={rp.description} onFocus={() => handleHighlight(rp.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.administrativeData.responsiblePersons]; list[idx].description = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, responsiblePersons: list}})); }} onInfoClick={() => handleHighlight(rp.sectionCoordinates)} />
+                            <TextArea label="Description" value={rp.description} onFocus={() => handleHighlight(getMergedBox([rp.sectionCoordinates, rp.fieldCoordinates?.name, rp.fieldCoordinates?.role, rp.fieldCoordinates?.description]), null, rp.description)} onChange={(v) => { const list = [...drmdData.administrativeData.responsiblePersons]; list[idx].description = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, responsiblePersons: list}})); }} onInfoClick={() => handleHighlight(getMergedBox([rp.sectionCoordinates, rp.fieldCoordinates?.name, rp.fieldCoordinates?.role, rp.fieldCoordinates?.description]), null, rp.description)} />
                          </div>
                          <div className="bg-gray-50 p-3 rounded flex items-center">
                             <div className="space-y-2">
@@ -1025,7 +1173,7 @@ const App: React.FC = () => {
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-3">
-                        <Input label="Name *" value={mat.name} onFocus={() => handleHighlight(mat.fieldCoordinates?.['name'] || mat.name)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].name = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.fieldCoordinates?.['name'] || mat.name)} />
+                        <Input label="Name *" value={mat.name} onFocus={() => handleHighlight(mat.fieldCoordinates?.name, mat.sectionCoordinates, mat.name)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].name = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.fieldCoordinates?.name, mat.sectionCoordinates, mat.name)} />
                         
                         {mat.materialIdentifiers.map((mid, midIdx) => {
                              const hasScheme = mid.scheme && mid.scheme !== "MaterialID" && mid.scheme.trim() !== "";
@@ -1036,7 +1184,7 @@ const App: React.FC = () => {
                                      key={midIdx}
                                      label="RM Code (e.g. BAM-M386a)" 
                                      value={compositeValue}
-                                     onFocus={() => handleHighlight(mat.sectionCoordinates)}
+                                     onFocus={() => handleHighlight(mat.fieldCoordinates?.materialIdentifiers, mat.sectionCoordinates, compositeValue.trim())}
                                      onChange={(val) => {
                                          const list = [...drmdData.materials];
                                          let scheme = "";
@@ -1057,25 +1205,25 @@ const App: React.FC = () => {
                                          list[idx].materialIdentifiers[midIdx].value = value;
                                          setDrmdData(p => ({...p, materials: list}));
                                      }}
-                                     onInfoClick={() => handleHighlight(mat.sectionCoordinates)}
+                                     onInfoClick={() => handleHighlight(mat.fieldCoordinates?.materialIdentifiers, mat.sectionCoordinates, compositeValue.trim())}
                                  />
                              );
                         })}
 
-                        <Input label="Material Class" value={mat.materialClass} onFocus={() => handleHighlight(mat.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].materialClass = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.sectionCoordinates)} />
+                        <Input label="Material Class" value={mat.materialClass} onFocus={() => handleHighlight(mat.fieldCoordinates?.materialClass, mat.sectionCoordinates, mat.materialClass)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].materialClass = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.fieldCoordinates?.materialClass, mat.sectionCoordinates, mat.materialClass)} />
                         
                         <div className="space-y-1">
-                            <Input label="Item Quantities" value={mat.itemQuantities} onFocus={() => handleHighlight(mat.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].itemQuantities = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.sectionCoordinates)} />
+                            <Input label="Item Quantities" value={mat.itemQuantities} onFocus={() => handleHighlight(mat.fieldCoordinates?.itemQuantities, mat.sectionCoordinates, mat.itemQuantities)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].itemQuantities = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.fieldCoordinates?.itemQuantities, mat.sectionCoordinates, mat.itemQuantities)} />
                             <div className="w-full border border-gray-200 bg-gray-50 rounded-md p-2 text-xs font-mono text-gray-600 truncate">
                                 {getDsiPreview(mat.itemQuantities)}
                             </div>
                         </div>
                     </div>
                     <div className="space-y-3">
-                         <TextArea label="Description" value={mat.description} onFocus={() => handleHighlight(mat.fieldCoordinates?.['description'] || mat.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].description = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.fieldCoordinates?.['description'] || mat.sectionCoordinates)} />
+                         <TextArea label="Description" value={mat.description} onFocus={() => handleHighlight(mat.fieldCoordinates?.description, mat.sectionCoordinates, mat.description)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].description = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.fieldCoordinates?.description, mat.sectionCoordinates, mat.description)} />
                          <div className="grid grid-cols-2 gap-4 items-end">
                              <div className="space-y-1">
-                                <Input label="Min Sample Size (e.g. 4.9 g) *" value={mat.minimumSampleSize} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['intendedUse'] || mat.fieldCoordinates?.['minimumSampleSize'] || mat.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].minimumSampleSize = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['intendedUse'] || mat.fieldCoordinates?.['minimumSampleSize'] || mat.sectionCoordinates)} />
+                                <Input label="Min Sample Size (e.g. 4.9 g) *" value={mat.minimumSampleSize} onFocus={() => handleHighlight(mat.fieldCoordinates?.minimumSampleSize, mat.sectionCoordinates, mat.minimumSampleSize)} onChange={(v) => { const list = [...drmdData.materials]; list[idx].minimumSampleSize = v; setDrmdData(p => ({...p, materials: list})); }} onInfoClick={() => handleHighlight(mat.fieldCoordinates?.minimumSampleSize, mat.sectionCoordinates, mat.minimumSampleSize)} />
                                 <div className="w-full border border-gray-200 bg-gray-50 rounded-md p-2 text-xs font-mono text-gray-600 truncate">
                                     {getDsiPreview(mat.minimumSampleSize)}
                                 </div>
@@ -1135,10 +1283,10 @@ const App: React.FC = () => {
                                 <div key={res.uuid} className="bg-gray-50 p-4 rounded border border-gray-200 shadow-sm">
                                     <div className="flex gap-4 mb-4 items-start">
                                         <div className="flex-1">
-                                            <Input label="Table Name" value={res.name} onFocus={() => handleHighlight(res.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].name = v; setDrmdData(p => ({...p, properties: list})); }} onInfoClick={() => handleHighlight(res.sectionCoordinates)} />
+                                            <Input label="Table Name" value={res.name} onFocus={() => handleHighlight(res.sectionCoordinates, null, res.name)} onChange={(v) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].name = v; setDrmdData(p => ({...p, properties: list})); }} onInfoClick={() => handleHighlight(res.sectionCoordinates, null, res.name)} />
                                         </div>
                                         <div className="flex-[2]">
-                                            <TextArea label="Table Description" value={res.description} onFocus={() => handleHighlight(res.sectionCoordinates)} onChange={(v) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].description = v; setDrmdData(p => ({...p, properties: list})); }} onInfoClick={() => handleHighlight(res.sectionCoordinates)} />
+                                            <TextArea label="Table Description" value={res.description} onFocus={() => handleHighlight(res.sectionCoordinates, null, res.description)} onChange={(v) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].description = v; setDrmdData(p => ({...p, properties: list})); }} onInfoClick={() => handleHighlight(res.sectionCoordinates, null, res.description)} />
                                         </div>
                                         <button onClick={() => { const list = [...drmdData.properties]; list[pIdx].results.splice(rIdx, 1); setDrmdData(p => ({...p, properties: list})); }} className="text-xs text-red-500 mt-6 bg-white border border-red-100 px-2 py-1 rounded">Remove</button>
                                     </div>
@@ -1165,7 +1313,7 @@ const App: React.FC = () => {
                                                             <input 
                                                                 className="w-full border-b border-transparent group-hover:border-gray-300 outline-none bg-transparent pr-4" 
                                                                 value={q.name} 
-                                                                onFocus={() => handleHighlight(res.sectionCoordinates)}
+                                                                onFocus={() => handleHighlight(res.sectionCoordinates, null, res.name)}
                                                                 onChange={(e) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].name = e.target.value; setDrmdData(p => ({...p, properties: list})); }} 
                                                             />
                                                         </td>
@@ -1178,7 +1326,7 @@ const App: React.FC = () => {
                                                             <input 
                                                                 className="w-full border-b border-transparent group-hover:border-gray-300 outline-none bg-transparent pr-4" 
                                                                 value={q.value} 
-                                                                onFocus={() => handleHighlight(res.sectionCoordinates)}
+                                                                onFocus={() => handleHighlight(res.sectionCoordinates, null, res.name)}
                                                                 onChange={(e) => { 
                                                                     const list = [...drmdData.properties]; 
                                                                     list[pIdx].results[rIdx].quantities[qIdx].value = e.target.value; 
@@ -1193,7 +1341,7 @@ const App: React.FC = () => {
                                                             <input 
                                                                 className="w-full border-b border-transparent group-hover:border-gray-300 outline-none bg-transparent pr-4" 
                                                                 value={q.uncertainty} 
-                                                                onFocus={() => handleHighlight(res.sectionCoordinates)}
+                                                                onFocus={() => handleHighlight(res.sectionCoordinates, null, res.name)}
                                                                 onChange={(e) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].uncertainty = e.target.value; setDrmdData(p => ({...p, properties: list})); }} 
                                                             />
                                                         </td>
@@ -1201,7 +1349,7 @@ const App: React.FC = () => {
                                                             <input 
                                                                 className="w-full border-b border-transparent group-hover:border-gray-300 outline-none bg-transparent pr-4" 
                                                                 value={q.unit} 
-                                                                onFocus={() => handleHighlight(res.sectionCoordinates)}
+                                                                onFocus={() => handleHighlight(res.sectionCoordinates, null, res.name)}
                                                                 onChange={(e) => { 
                                                                     const list = [...drmdData.properties]; 
                                                                     list[pIdx].results[rIdx].quantities[qIdx].unit = e.target.value; 
@@ -1217,8 +1365,8 @@ const App: React.FC = () => {
                                                                 {q.dsiUnit}
                                                             </div>
                                                         </td>
-                                                        <td className="p-1"><input className="w-full border-b border-transparent group-hover:border-gray-300 outline-none bg-transparent" value={q.coverageFactor} onChange={(e) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].coverageFactor = e.target.value; setDrmdData(p => ({...p, properties: list})); }} /></td>
-                                                        <td className="p-1"><input className="w-full border-b border-transparent group-hover:border-gray-300 outline-none bg-transparent" value={q.coverageProbability} onChange={(e) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].coverageProbability = e.target.value; setDrmdData(p => ({...p, properties: list})); }} /></td>
+                                                        <td className="p-1"><input className="w-full border-b border-transparent group-hover:border-gray-300 outline-none bg-transparent" value={q.coverageFactor} onFocus={() => handleHighlight(res.sectionCoordinates, null, res.name)} onChange={(e) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].coverageFactor = e.target.value; setDrmdData(p => ({...p, properties: list})); }} /></td>
+                                                        <td className="p-1"><input className="w-full border-b border-transparent group-hover:border-gray-300 outline-none bg-transparent" value={q.coverageProbability} onFocus={() => handleHighlight(res.sectionCoordinates, null, res.name)} onChange={(e) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].coverageProbability = e.target.value; setDrmdData(p => ({...p, properties: list})); }} /></td>
                                                         <td className="p-1 text-center"><button onClick={() => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities.splice(qIdx, 1); setDrmdData(p => ({...p, properties: list})); }} className="text-red-400 hover:text-red-600">×</button></td>
                                                     </tr>
                                                 ))}
@@ -1261,15 +1409,15 @@ const App: React.FC = () => {
           <SectionHeader title="Official ISO 17034 Statements" icon="📋" />
           <p className="text-sm text-gray-500 mb-4">Standard statements required by ISO 17034 for reference material certificates.</p>
           
-          <TextArea label="Intended Use *" value={drmdData.statements.official.intendedUse} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, intendedUse: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['intendedUse'] || drmdData.statements.official.intendedUse)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['intendedUse'] || drmdData.statements.official.intendedUse)} />
-          <TextArea label="Commutability" value={drmdData.statements.official.commutability} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, commutability: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['commutability'] || drmdData.statements.official.commutability)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['commutability'] || drmdData.statements.official.commutability)} />
-          <TextArea label="Storage Information *" value={drmdData.statements.official.storageInformation} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, storageInformation: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['storageInformation'] || drmdData.statements.official.storageInformation)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['storageInformation'] || drmdData.statements.official.storageInformation)} />
-          <TextArea label="Instructions For Handling And Use *" value={drmdData.statements.official.handlingInstructions} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, handlingInstructions: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['handlingInstructions'] || drmdData.statements.official.handlingInstructions)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['handlingInstructions'] || drmdData.statements.official.handlingInstructions)} />
-          <TextArea label="Metrological Traceability" value={drmdData.statements.official.metrologicalTraceability} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, metrologicalTraceability: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['metrologicalTraceability'] || drmdData.statements.official.metrologicalTraceability)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['metrologicalTraceability'] || drmdData.statements.official.metrologicalTraceability)} />
-          <TextArea label="Health And Safety Information" value={drmdData.statements.official.healthAndSafety} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, healthAndSafety: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['healthAndSafety'] || drmdData.statements.official.healthAndSafety)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['healthAndSafety'] || drmdData.statements.official.healthAndSafety)} />
-          <TextArea label="Subcontractors" value={drmdData.statements.official.subcontractors} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, subcontractors: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['subcontractors'] || drmdData.statements.official.subcontractors)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['subcontractors'] || drmdData.statements.official.subcontractors)} />
-          <TextArea label="Legal Notice" value={drmdData.statements.official.legalNotice} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, legalNotice: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['legalNotice'] || drmdData.statements.official.legalNotice)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['legalNotice'] || drmdData.statements.official.legalNotice)} />
-          <TextArea label="Reference To Certification Report" value={drmdData.statements.official.referenceToCertificationReport} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, referenceToCertificationReport: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['referenceToCertificationReport'] || drmdData.statements.official.referenceToCertificationReport)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.['referenceToCertificationReport'] || drmdData.statements.official.referenceToCertificationReport)} />
+          <TextArea label="Intended Use *" value={drmdData.statements.official.intendedUse} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, intendedUse: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.intendedUse, null, drmdData.statements.official.intendedUse)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.intendedUse, null, drmdData.statements.official.intendedUse)} />
+          <TextArea label="Commutability" value={drmdData.statements.official.commutability} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, commutability: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.commutability, null, drmdData.statements.official.commutability)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.commutability, null, drmdData.statements.official.commutability)} />
+          <TextArea label="Storage Information *" value={drmdData.statements.official.storageInformation} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, storageInformation: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.storageInformation, null, drmdData.statements.official.storageInformation)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.storageInformation, null, drmdData.statements.official.storageInformation)} />
+          <TextArea label="Instructions For Handling And Use *" value={drmdData.statements.official.handlingInstructions} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, handlingInstructions: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.handlingInstructions, null, drmdData.statements.official.handlingInstructions)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.handlingInstructions, null, drmdData.statements.official.handlingInstructions)} />
+          <TextArea label="Metrological Traceability" value={drmdData.statements.official.metrologicalTraceability} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, metrologicalTraceability: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.metrologicalTraceability, null, drmdData.statements.official.metrologicalTraceability)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.metrologicalTraceability, null, drmdData.statements.official.metrologicalTraceability)} />
+          <TextArea label="Health And Safety Information" value={drmdData.statements.official.healthAndSafety} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, healthAndSafety: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.healthAndSafety, null, drmdData.statements.official.healthAndSafety)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.healthAndSafety, null, drmdData.statements.official.healthAndSafety)} />
+          <TextArea label="Subcontractors" value={drmdData.statements.official.subcontractors} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, subcontractors: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.subcontractors, null, drmdData.statements.official.subcontractors)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.subcontractors, null, drmdData.statements.official.subcontractors)} />
+          <TextArea label="Legal Notice" value={drmdData.statements.official.legalNotice} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, legalNotice: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.legalNotice, null, drmdData.statements.official.legalNotice)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.legalNotice, null, drmdData.statements.official.legalNotice)} />
+          <TextArea label="Reference To Certification Report" value={drmdData.statements.official.referenceToCertificationReport} onChange={(v) => setDrmdData(p => ({...p, statements: {...p.statements, official: {...p.statements.official, referenceToCertificationReport: v}}}))} onFocus={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.referenceToCertificationReport, null, drmdData.statements.official.referenceToCertificationReport)} onInfoClick={() => handleHighlight(drmdData.statements.official.fieldCoordinates?.referenceToCertificationReport, null, drmdData.statements.official.referenceToCertificationReport)} />
 
           <SectionHeader title="Other Statements" icon="📝" />
           <p className="text-sm text-gray-500 mb-4">Add custom statements beyond the standard ISO 17034 requirements.</p>
@@ -1555,6 +1703,22 @@ const App: React.FC = () => {
     );
   };
 
+  const getMergedBox = (boxes: (number[] | null | undefined)[]): number[] | null => {
+      const valid = boxes.filter(b => Array.isArray(b) && b.length === 5 && b[3] > b[1] && b[4] > b[2]) as number[][];
+      if (valid.length === 0) return null;
+      
+      const page = valid[0][0];
+      const pageBoxes = valid.filter(b => b[0] === page);
+      if (pageBoxes.length === 0) return null;
+      
+      const minY = Math.min(...pageBoxes.map(b => b[1]));
+      const minX = Math.min(...pageBoxes.map(b => b[2]));
+      const maxY = Math.max(...pageBoxes.map(b => b[3]));
+      const maxX = Math.max(...pageBoxes.map(b => b[4]));
+      
+      return [page, Math.max(0, minY - 10), Math.max(0, minX - 10), Math.min(1000, maxY + 10), Math.min(1000, maxX + 10)];
+  };
+
   return (
     <div className="h-screen flex flex-col bg-gray-50 font-sans text-gray-900">
       <header className="bg-white border-b border-gray-200 p-4 flex justify-between items-center z-10 shadow-sm">
@@ -1562,7 +1726,7 @@ const App: React.FC = () => {
             <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-lg flex items-center justify-center text-white text-xl">🔬</div>
             <div>
                 <h1 className="text-lg font-bold text-gray-800">DRMD Generator</h1>
-                <p className="text-xs text-gray-500">Vercel Port • v0.3.0</p>
+                <p className="text-xs text-gray-500">Internal Testing v1.0.0-alpha</p>
             </div>
         </div>
         <div className="flex gap-3">
@@ -1587,7 +1751,11 @@ const App: React.FC = () => {
         
         <div className="w-[45%] bg-gray-800 border-r border-gray-700 flex flex-col relative">
           {pdfUrl ? (
-            <PdfViewer url={pdfUrl} highlightData={highlightData} />
+            <PdfViewer 
+                url={pdfUrl} 
+                highlightData={highlightData} 
+                onTextNotFound={() => setToastMessage("This information is created by VLM based on understanding and is not directly found in the PDF.")}
+            />
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-gray-400 p-10 text-center">
                 <div className="text-6xl mb-4 opacity-20">📄</div>
@@ -1608,6 +1776,13 @@ const App: React.FC = () => {
              <div className="absolute bottom-5 left-5 right-5 bg-red-500/90 text-white px-4 py-3 rounded shadow-lg backdrop-blur-md border border-red-400">
                 <p className="font-bold text-sm">Error</p>
                 <p className="text-xs">{error}</p>
+             </div>
+          )}
+
+          {toastMessage && (
+             <div className="absolute bottom-5 left-1/2 -translate-x-1/2 bg-yellow-100 border border-yellow-500 text-yellow-900 px-4 py-3 rounded shadow-lg backdrop-blur-md z-50 flex items-center justify-between" style={{maxWidth: '430px'}}>
+                 <span className="text-sm font-medium">{toastMessage}</span>
+                 <button onClick={() => setToastMessage(null)} className="ml-4 p-1 text-yellow-700 hover:text-yellow-900 font-bold focus:outline-none">&times;</button>
              </div>
           )}
         </div>

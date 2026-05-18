@@ -61,6 +61,7 @@ Key Extraction Rules:
      - FORBIDDEN NAMES: Do NOT use "Table 1", "Raw Data", "in mg/kg", "in %" as the *main* table name.
    - **FOOTNOTES & DESCRIPTIONS**: 
      - Capture numbered footnotes (1), 2)) or '*' descriptions found immediately below a table strictly into the 'description' field of that SPECIFIC 'MeasurementResult'. 
+     - **CRITICAL FOOTNOTE RESOLUTION**: If a table has a footnote pointer (e.g. "see footnote 3 on page 5"), you MUST go to that page, read the actual text of that referenced footnote, and extract THAT content into the table's 'description' along with its actual coordinates.
      - **DO NOT** put table-specific footnotes in the 'MaterialProperty' description field. Keep the property description for general text.
    - **COLUMN MAPPING**:
      - Values like "< 2" or "> 100" are VALUES. Put them in 'value'. Leave 'uncertainty' empty.
@@ -71,7 +72,7 @@ Key Extraction Rules:
 
 4. **Statements**: Extract full text and BOUNDING BOX COORDINATES (into fieldCoordinates) for Intended Use, Storage, Handling, etc.
    - **Subcontractors**: Look for sections titled "Participating Laboratories", "Collaborating Laboratories", "Analyses Performed By" or "Subcontractors". Extract the list of laboratory names found under these headers into the 'subcontractors' field.
-   - **Reference To Certification Report**: Ensure the coordinates capture the text describing the report availability (e.g., "A detailed technical report..."). Ensure the box is distinct from and strictly BELOW the Subcontractors/Laboratories section.
+   - **Reference To Certification Report**: Ensure the coordinates capture the text describing the report availability (e.g., "A detailed technical report... or Reference and list of citations"). Ensure the box is distinct from and strictly BELOW the Subcontractors/Laboratories section. **CRITICAL**: If the text contains a pointer like "*Notes and references are on pages X and Y", DO NOT extract that pointer text. Instead, actually go to the referenced pages, find the real references or certification report information, and extract THAT actual text and its coordinates.
 
 Return ONLY the JSON object.
 `;

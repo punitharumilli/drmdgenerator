@@ -255,7 +255,7 @@ ${renderValidity(data.administrativeData)}
                 </dcc:name>
                 <si:real>
                   <si:value>${escapeXml(val)}</si:value>
-                  <si:unit>${escapeXml(unit)}</si:unit>`;
+                  ${unit ? `<si:unit>${escapeXml(unit)}</si:unit>` : ''}`;
                 
                 // Uncertainty Block
                 if (q.uncertainty) {

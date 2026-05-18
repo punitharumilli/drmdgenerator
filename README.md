@@ -1,143 +1,158 @@
-# Digital Reference Material Generator (DRMD)
+# Digital Reference Material Data Generator
 
-A React-based web application that leverages **Google's Gemini 2.5 Flash** (Vision) to extract structured data from Reference Material Certificates (PDFs) and generate machine-readable XML documents.
+**Status:** Internal Testing (v1.0.0-alpha)
 
-## 🌟 Overview
+## Overview
 
-This tool streamlines the digitization of Reference Material Documents. Instead of manually typing data from certificates into XML files, users can:
-1.  **Upload** a PDF certificate.
-2.  **Analyze** the document using AI to extract text, tables, metadata, and *coordinates*.
-3.  **Review** the extracted data in a form with **interactive PDF highlighting**.
-4.  **Export** a validated XML file compliant with Digital Reference Material standards (including D-SI units).
+Managing reference material certificates involves extracting complex metadata and measurement data from PDFs, normalizing values across different units and formats, and integrating that data into standardized systems. This process is traditionally manual, error-prone, and difficult to scale.
 
-## 🔄 Detailed Workflow Architecture
+The DRMD Generator is a web-based tool designed to automate and streamline this workflow. It leverages Vision Language Models (VLMs) to intelligently extract structured data from reference material certificates, then provides an intuitive interface for validation and correction. The result is standards-compliant DRMD/DCC-formatted XML that can be seamlessly integrated into reference material databases and downstream systems worldwide.
 
-This project follows a strict linear data flow designed to transform unstructured PDF pixels into structured, schema-compliant XML.
+## Key Features
 
-### Phase 1: Document Ingestion
-*   **User Action**: The user drags and drops a PDF file (e.g., a Certificate of Analysis) into the application.
-*   **Process**: The browser reads the file using the `FileReader` API and converts it into a **Base64 encoded string**.
-*   **PDF Rendering**: Simultaneously, `pdf.js` renders the document visually on the left side of the screen, creating a canvas layer that allows for coordinate-based overlays.
+- **Intelligent extraction**: Uses vision-capable LLMs (Google Gemini) to extract text, tables, and metadata with precise coordinate tracking
+- **Interactive verification**: Split-screen interface lets you review extracted data against the original PDF with visual highlighting
+- **Repeatable workflow**: Normalized extraction with built-in unit conversion to D-SI canonical units
+- **Standards-compliant output**: Exports validated XML conforming to DRMD/DCC schemas
+- **Coordinate-backed validation**: Visual verification backed by precise bounding box coordinates for accuracy assurance
 
-### Phase 2: AI-Powered Extraction (Vision)
-*   **API Call**: The Base64 image data is sent to the **Google Gemini API** (Model: `gemini-2.5-flash`).
-*   **System Instruction**: The model receives a specialized prompt (`services/geminiService.ts`) that defines the strict JSON schema required. It is instructed to:
-    *   Identify "Administrative Data" (Producers, Expiry Dates).
-    *   Extract "Materials" and "Properties" (Tables of values).
-    *   **Crucially**: Return `[page, ymin, xmin, ymax, xmax]` coordinates for every extracted field and section.
-*   **Output**: Gemini returns a raw JSON object containing the structured text and the spatial coordinates of where that text is located in the document.
-
-### Phase 3: Intelligent Post-Processing & Normalization
-Before the user sees the data, the application cleans and transforms it:
-1.  **Unit Conversion (D-SI)**: The app scans all extracted units (e.g., `mg/kg`, `%`, `ppm`). It uses the `utils/unitConverter.ts` engine to map these to **Digital-SI (D-SI)** format (e.g., `\milli\gram\kilogram\tothe{-1}`).
-    *   *Rule*: If a unit is `%`, it is converted to `\percent` with a factor of `1` (preserving the visible value).
-2.  **Value Parsing**: It splits strings like "4.9 g" into a numerical Value (`4.9`) and a Unit (`g`). If the text is descriptive (e.g., "approx 10ml"), it is flagged as `noQuantity`.
-3.  **Date Normalization**: Validity periods like "Valid for 12 months" or "May 2025" are converted into ISO 8601 formats (`P1Y` or `2025-05-31`).
-
-### Phase 4: Interactive Review & Correction (UI)
-The user interacts with the split-screen interface:
-*   **Visual Highlighting**: When a user focuses on a field (e.g., "Material Name"), the app reads the coordinate metadata for that field. A **red overlay box** is drawn dynamically over the PDF on the left, showing exactly where the AI found that information.
-*   **Tabbed Organization**:
-    *   **Administrative**: Producer details, validity dates, responsible persons.
-    *   **Materials**: Description of the physical item and sample sizes.
-    *   **Properties**: Measurement tables (Name, Value, Uncertainty, Unit, k-factor, Probability).
-    *   **Comment & Document**: Allows adding general comments and embedding a binary file (PDF/DOCX) directly into the XML.
-*   **Manual Override**: The user can correct any AI errors. If "Main Signer" checkboxes need adjusting or values need tweaking, the React state updates instantly.
-
-### Phase 5: Validation
-*   **Schema Checks**: The app runs real-time validation against the DRMD/DCC schema rules.
-*   **Mandatory Fields**: Fields marked with an asterisk (`*`) (e.g., Name, Value, Unit) are checked.
-*   **Feedback**: If data is missing (e.g., no Producer defined), the "Validate & Export" tab shows a detailed error report and prevents export to ensure data integrity.
-
-### Phase 6: XML Serialization & Export
-*   **Generation**: Once validated, `utils/xmlGenerator.ts` constructs the final XML string.
-*   **Namespaces**: It applies the correct namespaces (`xmlns:dcc`, `xmlns:drmd`, `xmlns:si`).
-*   **Binary Embedding**: If a supplementary document was uploaded in Phase 4, it is Base64 encoded and embedded within the `<drmd:document>` tag.
-*   **Download**: The browser generates a `.xml` file and triggers a download for the user.
-
----
-
-## 🚀 Key Features
-
-*   **AI-Powered Extraction**: Uses `gemini-2.5-flash` to visually analyze the PDF structure, extracting nested tables, producer details, and complex validity periods.
-*   **Interactive PDF Viewer**:
-    *   **Coordinate Highlighting**: Clicking on a form field (or the "i" icon) draws a red box around the exact location in the PDF where the data was found.
-    *   **Text Fallback**: If specific coordinates are missing, it falls back to a smart text search to highlight matches.
-*   **Automatic Unit Conversion**: Converts human-readable units (e.g., `mg/kg`, `µm`) into **Digital-SI (D-SI)** machine-readable formats (e.g., `\milli\gram\kilogram\tothe{-1}`).
-*   **Validation & Export**: Ensures required fields exist before generating the final XML for Digital Calibration Certificate (DCC) systems.
-
-## 🛠️ Local Development
-
-Follow these steps to run the application locally on your machine using VS Code.
+## Getting Started
 
 ### Prerequisites
-*   Node.js (v18 or higher recommended)
-*   VS Code
 
-### Installation & Running
+- Node.js 18 or higher
+- npm (or yarn)
+- A Google Gemini API key (for extraction functionality)
 
-1.  **Install Dependencies**:
-    Open the terminal in the project root and run:
-    ```bash
-    npm install
-    ```
+### Installation & Development
 
-2.  **Start the Development Server**:
-    ```bash
-    npm run dev
-    ```
+```bash
+# Install dependencies
+npm install
 
-3.  **Open in Browser**:
-    Click the link shown in the terminal (usually `http://localhost:5173`).
-
-4.  **Add API Key**:
-    You will need a Google Gemini API Key. Go to the **Settings** tab in the running app to enter it.
-
-## 📂 Project Structure
-
-```mermaid
-graph TD
-    A[index.html] --> B[index.tsx]
-    B --> C[App.tsx]
-    C --> D[PDF Viewer Component]
-    C --> E[Data Forms]
-    C --> F[Gemini Service]
-    C --> G[XML Generator]
-    F --> H[Google Gemini API]
-    G --> I[Download XML]
+# Start the development server
+npm run dev
 ```
 
-### File Breakdown
+The application will be available at `http://localhost:5173` (or the URL shown in your terminal).
 
-| File | Type | Description |
-| :--- | :--- | :--- |
-| **`App.tsx`** | **UI Logic** | The main application controller. It manages the global `DRMD` state, handles file uploads, renders the PDF viewer, and manages the tabs (Admin, Materials, Properties). |
-| **`services/geminiService.ts`** | **AI Logic** | Communicates with the Google GenAI SDK. It contains the critical **System Instruction** that tells the model how to parse the PDF, including specific rules for **Coordinate Extraction** (ymin, xmin, etc.) and Table Exclusion logic. |
-| **`types.ts`** | **Data Model** | Defines the TypeScript interfaces (`DRMD`, `Producer`, `MeasurementResult`) that mirror the logical structure of a Reference Material Document. |
-| **`utils/unitConverter.ts`** | **Utility** | A specialized utility that maps standard units to the D-SI LaTeX-style format required for digital metrology (e.g., converting `%` to factor `1` and unit `\percent`). |
-| **`utils/xmlGenerator.ts`** | **Output** | Converts the React state into the final XML string. It handles XML namespaces, valid element nesting, and string escaping. |
+Before extracting data, configure your Gemini API key in the **Settings** tab.
 
-## ⚙️ Setup & Usage
+## How It Works
 
-1.  **API Key**: You need a valid Google Gemini API Key.
-2.  **Launch**: Open the application.
-3.  **Settings**: Go to the **Settings** tab and paste your API Key.
-4.  **Upload**: Click **Upload PDF** to select a Reference Material Certificate.
-5.  **Review**:
-    *   Navigate through **Administrative Data**, **Materials**, and **Properties**.
-    *   Click the **(i)** icon next to fields to see where the data came from in the PDF.
-6.  **Export**: Go to **Validate & Export** to generate the `.xml` file.
+The generator follows a straightforward three-stage workflow:
 
-## 📏 D-SI Unit Support
+1. **Upload & Extraction**: Upload a reference material certificate PDF. The Gemini vision model analyzes the document and extracts structured data including text content, table information, and precise bounding box coordinates.
 
-The converter supports Platinum/Gold class units from the SmartCom D-SI Guide.
+2. **Review & Correct**: The split-screen interface displays the extracted data alongside the original PDF. Visual highlights show exactly where each piece of data was detected. Edit any values that need correction—the highlighting updates in real-time.
 
-| Input | D-SI Unit | Factor |
-| :--- | :--- | :--- |
-| `mg/kg` | `\milli\gram\kilogram\tothe{-1}` | `1` |
-| `%` | `\percent` | `1` |
-| `µm` | `\micro\metre` | `1e-6` |
-| `g/cm3` | `\gram\centi\metre\tothe{-3}` | `1` |
+3. **Validate & Export**: Run schema validation to ensure data integrity, then export a standards-compliant DRMD/DCC XML file ready for integration with your systems.
 
----
-*Documentation for Digital Reference Material Generator v0.3.0*
+## Architecture
+
+The codebase is organized around a clear separation of concerns:
+
+| Module | Purpose |
+|--------|---------|
+| `App.tsx` | Main React component managing state, user interactions, and the extraction workflow |
+| `services/llmService.ts` | Handles communication with Google Gemini; sends image data and receives structured extraction results |
+| `utils/xmlGenerator.ts` | Converts in-memory DRMD data models into validated XML documents |
+| `utils/xmlParser.ts` | Parses imported DRMD XML back into the application's data structure |
+| `utils/unitConverter.ts` | Performs unit normalization and conversion to D-SI canonical units |
+| `utils/casMapping.ts` | Provides CAS number standardization and validation helpers |
+
+### Directory Structure
+
+```
+DRMDGenerator/
+├── schema/                   # XML Schema Definition files
+│   ├── dcc.xsd              # DCC (Digital Calibration Certificate) schema
+│   ├── drmd.xsd             # DRMD (Digital Reference Material Document) schema
+│   ├── SI_Format.xsd        # SI units and measurement format schema
+│   └── xmldsig-core-schema.xsd # XML digital signature schema
+├── services/                # External service integrations
+│   └── llmService.ts        # Gemini vision API integration for extraction
+├── utils/                   # Utility functions and helpers
+│   ├── casMapping.ts        # CAS number normalization and validation
+│   ├── unitConverter.ts     # Unit conversion and D-SI normalization
+│   ├── xmlGenerator.ts      # Converts DRMD model to XML output
+│   └── xmlParser.ts         # Parses imported DRMD XML into app model
+├── document/                # Reference documentation and guides
+│   ├── 2020_07-01_SmartCom_Deliverable_D1_Zenodo-2.pdf # DSI unit conversion reference
+│   └── DRMD_BestPractice_0.0.9v.pdf # Reference Material best practices docuement
+├── App.tsx                  # Main React application component
+├── index.html               # HTML entry point
+├── index.tsx                # React entry point and DOM mounting
+├── metadata.json            # Project metadata and configuration
+├── package.json             # npm dependencies and scripts
+├── README.md                # This file
+├── tsconfig.json            # TypeScript compiler configuration
+├── types.ts                 # TypeScript type definitions and interfaces
+├── vercel.json              # Vercel deployment configuration
+└── vite.config.ts           # Vite build tool configuration
+```
+
+
+
+## Data Extraction & Verification
+
+### Extraction Process
+
+The extraction workflow leverages Gemini's vision capabilities with carefully tuned prompts to:
+
+- Extract text content with high precision
+- Identify and structure measurement tables
+- Generate normalized coordinate information for visual verification: `[pageIndex, ymin, xmin, ymax, xmax]` on a 0–1000 normalized scale
+- Preserve chemical formulas and special formatting
+- Detect table-level metadata (coverage factors, probability estimates)
+
+### Visual Highlighting
+
+The interface supports two highlighting strategies to ensure accuracy:
+
+1. **Coordinate overlay** (preferred): When Gemini returns precise coordinates, the UI renders a transparent overlay box on the PDF showing exactly which region was extracted. This provides confidence that the data came from the intended location.
+
+2. **Text search fallback**: If coordinates are unavailable, the UI performs a fuzzy text search across the PDF's text layer and highlights matching content. While less precise than coordinate-based matching, this fallback ensures visibility even when coordinate data is incomplete.
+
+## Validation & Export
+
+Before exporting, the application validates:
+
+- All required fields are present
+- Unit values are consistent and convertible to D-SI
+- XML structure conforms to DRMD/DCC schemas
+
+The export process generates standards-compliant XML with proper namespace declarations and omits empty elements for qualitative quantities. The resulting file is ready for immediate integration with reference material databases and downstream processing systems.
+
+## Development
+
+### Setting Up a Development Environment
+
+```bash
+npm run dev              # Start the dev server with hot reload
+npm run build           # Build for production
+npm run type-check      # Run TypeScript type checking
+```
+
+### Code Conventions
+
+- Follow the TypeScript and React patterns established in `App.tsx`
+- When modifying coordinate calculations, test against certificate PDFs with known highlight positions
+- Schema changes should be mirrored in `types.ts`, `xmlGenerator.ts`, and `xmlParser.ts`
+
+### Testing & Debugging
+
+1. Start the dev server and upload a reference material certificate
+2. Configure a Gemini API key in Settings
+3. Trigger extraction and inspect the JSON response in your browser's DevTools Network tab
+4. Verify highlighted regions align with the original document—check the console for detailed coordinate logs and viewport information
+5. Use the Editor tab to test manual corrections and ensure the preview updates correctly
+
+## Resource Documentation
+
+The following resources provide detailed guidance:
+
+- **document/2020_07-01_SmartCom_Deliverable_D1_Zenodo-2.pdf**: Complete reference for DSI unit conversion logic, including edge cases like percentage handling and SI prefix mapping
+- **document/DRMD_BestPractice_0.0.9v.pdf**: Best practices for certificate interpretation, naming conventions, and table extraction rules
+- **schema/*.xsd**: Authoritative XML Schema Definition files; reference these when updating `xmlGenerator.ts` or making schema changes
+
